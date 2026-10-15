@@ -1,0 +1,102 @@
+'use client'
+
+import React from "react"
+import { ShieldCheck, RefreshCw, Check, ArrowRight } from "lucide-react"
+import { Button } from "@/components/ui/button"
+
+interface CreateWalletFormProps {
+  generatedPhrase: string
+  isAgreed: boolean
+  setIsAgreed: (agreed: boolean) => void
+  onRegenerate: () => void
+  onSubmit: () => void
+}
+
+export function CreateWalletForm({
+  generatedPhrase,
+  isAgreed,
+  setIsAgreed,
+  onRegenerate,
+  onSubmit
+}: CreateWalletFormProps) {
+  
+  const wordsArray = generatedPhrase ? generatedPhrase.split(" ") : []
+
+  return (
+    <div className="space-y-4 flex flex-col justify-between h-full">
+      {/* Компактное предупреждение */}
+      <div className="rounded-xl border border-amber-500/10 bg-amber-500/5 p-2.5 text-[11px] text-amber-300/90 font-medium flex gap-2 leading-tight">
+        <ShieldCheck size={16} className="shrink-0 text-amber-400 mt-0.5" />
+        <span>Запиши эти слова на бумаге. Это единственный ключ к твоим средствам.</span>
+      </div>
+
+      {/* Компактная зона мнемоники в 3 колонки — БЕЗ системного скролла */}
+      <div className="relative bg-zinc-950/90 border border-zinc-900 rounded-2xl p-3 transition-colors hover:border-zinc-850">
+        <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-zinc-900">
+          <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider px-0.5">
+            Мнемоника (24 слова)
+          </span>
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className="text-zinc-400 hover:text-[#FF2E93] active:scale-95 transition-all p-1 rounded-lg hover:bg-zinc-900 cursor-pointer"
+            title="Сгенерировать заново"
+          >
+            <RefreshCw size={12} />
+          </button>
+        </div>
+
+        {/* 3 колонки, крупные овалы, текст text-[13px] читается идеально */}
+        <div className="grid grid-cols-3 gap-1.5 select-none">
+          {wordsArray.map((word, index) => (
+            <div 
+              key={index} 
+              className="flex items-center gap-1.5 bg-zinc-900/40 border border-zinc-900/60 rounded-full pl-1.5 pr-2 py-1 transition-all hover:bg-zinc-900/80"
+            >
+              {/* Компактный матовый кружок-индекс */}
+              <span className="text-[9px] font-mono font-bold text-zinc-500 bg-zinc-950/60 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0">
+                {index + 1}
+              </span>
+              {/* Шрифт крупный, жирный, но за счет 3-х колонок все влезает на один экран */}
+              <span className="text-[13px] font-sans font-bold text-zinc-200 truncate tracking-tight select-all">
+                {word}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Идеально отцентрованный чекбокс — всегда на виду */}
+      <label className="flex items-center gap-3 px-1 min-h-[24px] cursor-pointer select-none group w-full">
+        <div className="relative shrink-0 flex items-center justify-center">
+          <input 
+            type="checkbox"
+            checked={isAgreed}
+            onChange={(e) => setIsAgreed(e.target.checked)}
+            className="sr-only peer"
+          />
+          <div className="w-4.5 h-4.5 border-2 border-zinc-700 peer-checked:border-[#FF2E93] peer-checked:bg-[#FF2E93] rounded-full transition-all flex items-center justify-center shadow-sm" />
+          <Check size={9} className="absolute inset-0 m-auto text-black font-black scale-0 peer-checked:scale-100 transition-transform" />
+        </div>
+        
+        <span className="text-[10px] font-bold text-zinc-400 group-hover:text-zinc-300 transition-colors uppercase tracking-wide pt-0.5">
+          Я надежно сохранил фразу и принимаю риски
+        </span>
+      </label>
+
+      {/* Главная кнопка действия — жестко зафиксирована внизу экрана */}
+      <Button 
+        onClick={onSubmit}
+        disabled={!isAgreed}
+        className={`w-full font-bold text-sm h-12 rounded-xl transition-all border-none flex items-center justify-center gap-2 ${
+          isAgreed 
+            ? 'bg-white hover:bg-zinc-200 text-black active:scale-[0.98] cursor-pointer' 
+            : 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
+        }`}
+      >
+        <span>Создать новый сейф</span>
+        <ArrowRight size={16} className={isAgreed ? "text-[#FF2E93]" : "text-zinc-600"} />
+      </Button>
+    </div>
+  )
+}
