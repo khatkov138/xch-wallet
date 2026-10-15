@@ -1,6 +1,5 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -8,7 +7,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   
-  /* ИСПРАВЛЕНО: Связываем шрифт Tailwind v4 с переменной Geist из Next.js */
+  /* Связываем шрифт Tailwind v4 с переменной Geist из Next.js */
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
   --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;

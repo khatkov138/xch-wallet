@@ -10,6 +10,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { CreateWalletForm } from "./_components/CreateWalletForm"
 import { ImportWalletForm } from "./_components/ImportWalletForm"
 import { PinCodeForm } from "./_components/PinCodeForm"
+import { AuthBackground } from "./_components/AuthBackground"
+import { AuthHeader } from "./_components/AuthHeader"
 import { encryptMnemonic } from "@/lib/crypto"
 
 export default function AuthPage() {
@@ -43,13 +45,11 @@ export default function AuthPage() {
     setShowPin(true)
   }
 
-   const handlePinSuccess = async (finalPin: string) => {
+  const handlePinSuccess = async (finalPin: string) => {
     try {
       const encryptedData = await encryptMnemonic(phraseToEncrypt, finalPin)
       localStorage.setItem("xcha_mnemonic", encryptedData)
       localStorage.setItem("xcha_is_auth", "true")
-      
-      // Инициализируем токен сессии на стартовые 5 минут, чтобы первый вход был бесшовным
       sessionStorage.setItem("xcha_session_expires", (Date.now() + 5 * 60 * 1000).toString())
       
       router.push("/dashboard")
@@ -60,24 +60,14 @@ export default function AuthPage() {
 
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 text-white font-sans antialiased overflow-hidden flex flex-col justify-between">
-      <div className="absolute top-[-25%] left-[-20%] w-[140%] h-[70vh] bg-gradient-to-br from-[#FF2E93]/20 via-[#8B5CF6]/10 to-transparent blur-[130px] pointer-events-none z-0" />
-      <div className="absolute bottom-[-20%] right-[-10%] w-[60vw] h-[60vh] bg-[#FF2E93]/5 blur-[120px] pointer-events-none z-0" />
+      {/* Задний фон вынесен в компонент */}
+      <AuthBackground />
 
       <div className="relative z-10 w-full max-w-md mx-auto px-6 flex-1 flex flex-col justify-between py-10">
         <div className="w-full space-y-8">
           
-          <header className="flex items-center justify-between w-full pt-2">
-            <div className="flex items-center gap-2">
-              <div className="relative flex items-center justify-center bg-white text-black font-black text-xl px-4 py-1.5 rounded-2xl tracking-tight shadow-md select-none">
-                XCH<span className="text-[#FF2E93]">A</span>
-                <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-[#FF2E93] border-2 border-zinc-950" />
-              </div>
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">v0.2.0</span>
-            </div>
-            <div className="bg-zinc-900/80 backdrop-blur-md px-3 py-1 rounded-full border border-zinc-800 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-              Non-Custodial
-            </div>
-          </header>
+          {/* Шапка вынесена в компонент */}
+          <AuthHeader version="v0.2.0" />
 
           {!showPin ? (
             <>
@@ -140,7 +130,7 @@ export default function AuthPage() {
         </div>
 
         <footer className="w-full text-center pt-8">
-          <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">XCHA Ecosystem • Secure Wallet Solution</p>
+          <p className="text-[9px] font-bold text-zinc-600 uppercase tracking-widest">XCH Ecosystem • Secure Wallet Solution</p>
         </footer>
       </div>
     </div>

@@ -70,7 +70,7 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
             {/* Изображение QR-кода, генерируется на лету по адресу */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
-              src={`https://qrserver.com{walletAddress}&color=000000&ecc=M`}
+              src={`https://qrserver.com{walletAddress}&size=160x160&color=000000&ecc=M`}
               alt="Chia QR Code"
               className="w-40 h-40 select-none pointer-events-none"
             />

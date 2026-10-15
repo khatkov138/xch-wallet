@@ -5,7 +5,8 @@ import { Delete, ShieldLock } from "lucide-react"
 import { decryptMnemonic } from "@/lib/crypto"
 
 interface UnlockPinFormProps {
-  onSuccess: () => void
+  // Теперь onSuccess принимает расшифрованную фразу, чтобы хук и страница в куче файлов не путались
+  onSuccess: (decryptedMnemonic: string) => void
 }
 
 export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
@@ -61,8 +62,10 @@ export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
       const t = setTimeout(async () => {
         try {
           const encryptedData = localStorage.getItem("xcha_mnemonic") || ""
-          await decryptMnemonic(encryptedData, pin)
-          onSuccess()
+          // Расшифровываем сид введенным пином
+          const decrypted = await decryptMnemonic(encryptedData, pin)
+          // Отдаем чистую фразу в хук useWalletAuth, чтобы мгновенно деривировать xch1... адрес
+          onSuccess(decrypted)
         } catch (e) {
           setIsError(true)
           setShake(true)
