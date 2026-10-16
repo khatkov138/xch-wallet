@@ -40,13 +40,13 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm transition-all duration-300 animate-in fade-in">
-      
+
       {/* Закрытие модалки при клике на задний фон */}
       <div className="absolute inset-0" onClick={onClose} />
 
       {/* Контейнер шторки — выезжает снизу вверх */}
       <div className="relative w-full max-w-md bg-zinc-900 border-t border-zinc-800 rounded-t-[32px] p-6 space-y-6 shadow-2xl animate-in slide-in-from-bottom duration-300 z-10">
-        
+
         {/* Хэндл шторки для удобного свайпа визуально */}
         <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto -mt-2 mb-2 select-none" />
 
@@ -56,7 +56,7 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
             <h3 className="text-lg font-black tracking-tight text-white">Получить XCH</h3>
             <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wide mt-0.5">Экосистема Chia Network</p>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="h-8 w-8 rounded-full bg-zinc-950 border border-zinc-800 flex items-center justify-center text-zinc-400 hover:text-white cursor-pointer active:scale-95 transition-all"
           >
@@ -69,8 +69,8 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
           <div className="relative p-4 bg-white rounded-3xl shadow-xl shadow-[#FF2E93]/5 border-4 border-zinc-950 ring-1 ring-zinc-800">
             {/* Изображение QR-кода, генерируется на лету по адресу */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
-              src={`https://qrserver.com{walletAddress}&size=160x160&color=000000&ecc=M`}
+            <img
+              src={`http://api.qrserver.com/v1/create-qr-code/?data=${walletAddress}&size=160x160`}
               alt="Chia QR Code"
               className="w-40 h-40 select-none pointer-events-none"
             />
@@ -78,7 +78,7 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest animate-pulse">
             Сканируйте для перевода
           </span>
-        </div>
+        </div> 
 
         {/* Отображение полного Chia-адреса */}
         <Card className="bg-zinc-950/60 border border-zinc-855 rounded-[20px]">
@@ -94,19 +94,18 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
 
         {/* Финтех кнопки нижнего ряда: Копировать и Поделиться */}
         <div className="grid grid-cols-2 gap-3">
-          <Button 
+          <Button
             onClick={handleCopy}
-            className={`h-12 font-black text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer border-none shadow-md ${
-              copied 
-                ? 'bg-emerald-500 text-white shadow-emerald-500/10' 
+            className={`h-12 font-black text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer border-none shadow-md ${copied
+                ? 'bg-emerald-500 text-white shadow-emerald-500/10'
                 : 'bg-white hover:bg-zinc-200 text-black shadow-white/5 active:scale-[0.98]'
-            }`}
+              }`}
           >
             {copied ? <Check size={15} /> : <Copy size={15} />}
             <span>{copied ? "СКОПИРОВАН" : "КОПИРОВАТЬ"}</span>
           </Button>
 
-          <Button 
+          <Button
             onClick={handleShare}
             className="h-12 bg-zinc-950 hover:bg-zinc-900 text-white border border-zinc-800 font-black text-xs rounded-xl flex items-center justify-center gap-2 active:scale-[0.98] transition-all cursor-pointer"
           >

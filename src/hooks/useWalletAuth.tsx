@@ -7,17 +7,22 @@ const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут активности
 
 export function useWalletAuth(onDataLoaded: (address: string) => void) {
   const [walletAddress, setWalletAddress] = useState<string>("")
-  const [decryptedPhrase, setDecryptedPhrase] = useState<string>("") 
+  const [decryptedPhrase, setDecryptedPhrase] = useState<string>("")
   const [isVerifying, setIsVerifying] = useState(true)
   const [isScreenLocked, setIsScreenLocked] = useState(false)
 
-  // Общая функция деривации (вычисляет xch1... адрес и отправляет наверх в page.tsx для загрузки баланса)
+  // Общая функция деривации (вычисляет адрес и отправляет наверх в page.tsx для загрузки баланса)
   const deriveAndLoad = useCallback(async (clearMnemonic: string) => {
     try {
       setDecryptedPhrase(clearMnemonic)
-      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic)
-      setWalletAddress(derivedAddress)
       
+      // ЧИТАЕМ ФЛАГ ИЗ .ENV: преобразуем строковое "true" в чистый boolean
+      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
+      
+      // Передаем true или false в универсальный крипто-модуль
+      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet)
+      setWalletAddress(derivedAddress)
+
       // Запускаем загрузку баланса из блокчейна в page.tsx
       onDataLoaded(derivedAddress)
     } catch (err) {
@@ -27,8 +32,8 @@ export function useWalletAuth(onDataLoaded: (address: string) => void) {
 
   const lockProfile = useCallback(() => {
     sessionStorage.removeItem("xcha_session_expires")
-    setDecryptedPhrase("") 
-    setIsScreenLocked(true) // Раскомментировал, чтобы автоблокировка реально включала экран ввода ПИН-кода
+    setDecryptedPhrase("")
+    setIsScreenLocked(true) // Включаем экран ввода ПИН-кода
   }, [])
 
   // Эта функция вызывается, когда UnlockPinForm успешно расшифровала сид-фразу введенным ПИН-кодом
@@ -36,10 +41,10 @@ export function useWalletAuth(onDataLoaded: (address: string) => void) {
     try {
       // 1. Записываем новый токен жизни сессии в sessionStorage
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
-      
-      // 2. ФИКС: Передаем полученную расшифрованную фразу в движок деривации адреса
+
+      // 2. Передаем полученную расшифрованную фразу в движок деривации адреса
       await deriveAndLoad(clearMnemonic)
-      
+
       // 3. Открываем шторку сейфа
       setIsScreenLocked(false)
     } catch (error) {
@@ -51,7 +56,7 @@ export function useWalletAuth(onDataLoaded: (address: string) => void) {
   useEffect(() => {
     const isAuth = localStorage.getItem("xcha_is_auth")
     const savedMnemonic = localStorage.getItem("xcha_mnemonic")
-    
+
     if (isAuth !== "true" || !savedMnemonic) {
       window.location.href = "/"
       return
@@ -63,12 +68,12 @@ export function useWalletAuth(onDataLoaded: (address: string) => void) {
     if (!sessionExpires || now > parseInt(sessionExpires, 10)) {
       setIsScreenLocked(true) // Сессия просрочена — требуем ПИН
     } else {
-      // Если сессия еще активна, но страница обновилась через F5, стейты сбросились в пустые.
+      // Если страница обновилась через F5, стейты сбросились в пустые.
       // Для безопасности оперативки принудительно заставляем ввести ПИН заново, чтобы восстановить ключи.
-      setIsScreenLocked(true) 
+      setIsScreenLocked(true)
     }
 
-    setIsVerifying(false)
+    setIsVerifying(false) 
   }, [])
 
   // Логика афк-таймера контроля бездействия пользователя

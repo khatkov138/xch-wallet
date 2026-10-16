@@ -7,7 +7,7 @@ interface BalanceSectionProps {
   balanceXCH: string
   balanceUSD: string
   isRefreshing: boolean
-  onRefresh: () => void
+  onRefresh: () => void 
 }
 
 export function BalanceSection({ balanceXCH, balanceUSD, isRefreshing, onRefresh }: BalanceSectionProps) {
