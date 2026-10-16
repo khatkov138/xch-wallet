@@ -21,7 +21,7 @@ export function CreateWalletForm({
 }: CreateWalletFormProps) {
   
   const wordsArray = generatedPhrase ? generatedPhrase.split(" ") : []
-
+  console.log(wordsArray)
   return (
     <div className="space-y-4 flex flex-col justify-between h-full">
       {/* Компактное предупреждение */}

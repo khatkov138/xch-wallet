@@ -64,7 +64,7 @@ export default function DashboardPage() {
     setTimeout(() => setIsRefreshing(false), 1000)
   }
 
-  // 1. Экран первичной проверки при загрузке / F5
+  // 1. Экран первичной проверки при загрузке / F5 
   if (isVerifying) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">

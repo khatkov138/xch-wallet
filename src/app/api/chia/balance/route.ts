@@ -2,16 +2,11 @@ import { NextResponse } from "next/server"
 import fs from "fs"
 import path from "path"
 import https from "https"
-import { bech32m } from "bech32" // Твой рабочий bech32m модуль
+import os from "os" // Для динамического поиска домашней папки Windows
 import { addressToPuzzleHash } from "@/lib/chia-crypto"
 
 // Отключаем панику Node.js из-за самоподписанных SSL-сертификатов локальной ноды Chia
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-
-/**
- * Переводит человеческий адрес (xch1... или txch1...) в hex-строку puzzle_hash для ноды
- */
-
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -20,18 +15,31 @@ export async function GET(request: Request) {
   console.log(`\n[CHIA BALANCE] === СТАРТ ЗАПРОСА БАЛАНСА ===`)
   console.log(`[CHIA BALANCE] Получен адрес из браузера: "${address}"`)
 
-  // МЕНЯЕМ ТУТ: Делаем валидацию универсальной, чтобы она разрешала и xch1, и txch1
+  // Валидация адреса: разрешаем и xch1, и txch1
   if (!address || (!address.startsWith("xch1") && !address.startsWith("txch1"))) {
     console.log(`[CHIA BALANCE] ОШИБКА: Неверный формат адреса (не xch1 и не txch1)`)
     return NextResponse.json({ error: "Valid Chia address (Mainnet or Testnet) is required" }, { status: 400 })
   }
 
   try {
-    const certPath = path.join(process.cwd(), "src/certs/private_wallet.crt")
-    const keyPath = path.join(process.cwd(), "src/certs/private_wallet.key")
+    // 1. Динамически определяем путь к домашней папке пользователя (C:\Users\Имя)
+    const homeDir = os.homedir()
+    
+    // 2. Считываем флаг сети из вашего .env.local
+    const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
+    
+    // 3. Автоматически выбираем нужную папку с актуальными сертификатами
+    const networkFolder = isTestnet ? "testnet11" : "mainnet"
+    const sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "wallet")
+
+    const certPath = path.join(sslPath, "private_wallet.crt")
+    const keyPath = path.join(sslPath, "private_wallet.key")
+
+    console.log(`[CHIA BALANCE] Автоматический выбор mTLS пути: ${sslPath}`)
 
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      return NextResponse.json({ error: "SSL-сертификаты кошелька отсутствуют в src/certs/" }, { status: 500 })
+      console.log(`[CHIA BALANCE] ОШИБКА: Сертификаты не найдены по пути ${sslPath}`)
+      return NextResponse.json({ error: `SSL-сертификаты отсутствуют по пути: ${sslPath}` }, { status: 500 })
     }
 
     const cert = fs.readFileSync(certPath)
@@ -107,9 +115,12 @@ export async function GET(request: Request) {
     console.log(`[CHIA BALANCE] УСПЕХ -> Баланс посчитан! Mojo: ${totalMojo} | XCH: ${totalXch}`)
     console.log(`[CHIA BALANCE] === КОНЕЦ УСПЕШНОГО ЗАПРОСА ===\n`)
 
+    // ВОЗВРАЩАЕМ УДОБНЫЙ ДЛЯ ФРОНТЕНДА JSON С ПОСЧИТАННЫМ БАЛАНСОМ
     return NextResponse.json({
+      success: true,
       xch: totalXch,
-      mojo: totalMojo
+      mojo: totalMojo,
+      coin_records: coinRecords
     })
 
   } catch (error: any) {
