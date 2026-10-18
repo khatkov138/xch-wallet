@@ -1,19 +1,22 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useRef } from "react"
 import { Delete, ShieldLock } from "lucide-react"
 import { decryptMnemonic } from "@/lib/crypto"
 
 interface UnlockPinFormProps {
-  // Теперь onSuccess принимает расшифрованную фразу, чтобы хук и страница в куче файлов не путались
-  onSuccess: (decryptedMnemonic: string) => void
+  // ФИКС: Изменили имя на onUnlock, чтобы оно идеально стыковалось с вызовом в page.tsx
+  onUnlock: (decryptedMnemonic: string) => void
 }
 
-export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
+export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
   const [pin, setPin] = useState("")
   const [shake, setShake] = useState(false)
   const [isError, setIsError] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
+
+  // Реф для безопасного хранения тайм-аута разблокировки
+  const unlockTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const handleNumberClick = useCallback((num: string) => {
     if (pin.length < 4 && !isLocked && !isError) {
@@ -34,17 +37,15 @@ export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
     window.location.href = "/"
   }
 
-  // Исправленный нативный перехват физической клавиатуры
+  // Нативный перехват физической клавиатуры
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return
 
-      // Проверяем, что нажата именно одиночная цифра от 0 до 9
       if (e.key >= "0" && e.key <= "9" && e.key.length === 1) {
         e.preventDefault()
         handleNumberClick(e.key)
-      } 
-      // Проверяем клавиши удаления
+      }
       else if (e.key === "Backspace" || e.key === "Delete") {
         e.preventDefault()
         handleDelete()
@@ -55,20 +56,24 @@ export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [handleNumberClick, handleDelete])
 
+  // Эффект валидации ПИН-кода при заполнении 4 цифр
   useEffect(() => {
     if (pin.length === 4) {
       setIsLocked(true)
 
-      const t = setTimeout(async () => {
+      unlockTimeoutRef.current = setTimeout(async () => {
         try {
           const encryptedData = localStorage.getItem("xcha_mnemonic") || ""
           // Расшифровываем сид введенным пином
           const decrypted = await decryptMnemonic(encryptedData, pin)
-          // Отдаем чистую фразу в хук useWalletAuth, чтобы мгновенно деривировать xch1... адрес
-          onSuccess(decrypted)
+
+          // Отдаем чистую фразу в глобальный стор через хук useWalletAuth
+          onUnlock(decrypted)
         } catch (e) {
+          console.error("Ошибка расшифровки ПИН-кода:", e)
           setIsError(true)
           setShake(true)
+
           setTimeout(() => setShake(false), 300)
           setTimeout(() => {
             setIsError(false)
@@ -77,19 +82,21 @@ export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
           }, 1200)
         }
       }, 300)
-      return () => clearTimeout(t)
     }
-  }, [pin, onSuccess])
+
+    return () => {
+      if (unlockTimeoutRef.current) clearTimeout(unlockTimeoutRef.current)
+    }
+  }, [pin, onUnlock])
 
   return (
     <div className="fixed inset-0 z-50 bg-zinc-950/80 backdrop-blur-xl flex flex-col items-center justify-center p-6 select-none animate-in fade-in duration-300">
       <div className="flex flex-col items-center justify-between h-[480px] w-full max-w-xs mx-auto">
-        
+
         {/* Текстовый заголовок */}
         <div className="text-center space-y-2">
-          <div className={`mx-auto h-10 w-10 border rounded-full flex items-center justify-center transition-colors duration-300 ${
-            isError ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-[#FF2E93]/10 border-[#FF2E93]/20 text-[#FF2E93]"
-          }`}>
+          <div className={`mx-auto h-10 w-10 border rounded-full flex items-center justify-center transition-colors duration-300 ${isError ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-[#FF2E93]/10 border-[#FF2E93]/20 text-[#FF2E93]"
+            }`}>
             <ShieldLock size={20} />
           </div>
           <h3 className="text-lg font-black tracking-tight text-white">Сейф закрыт</h3>
@@ -103,22 +110,20 @@ export function UnlockPinForm({ onSuccess }: UnlockPinFormProps) {
           {[...Array(4)].map((_, i) => (
             <div
               key={i}
-              className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${
-                isError
+              className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${isError
                   ? "bg-red-500 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
                   : i < pin.length
                     ? "bg-[#FF2E93] border-[#FF2E93] shadow-[0_0_10px_rgba(255,46,147,0.5)] scale-110"
                     : "border-zinc-800 bg-transparent"
-              }`}
+                }`}
             />
           ))}
         </div>
 
         {/* Интерактивная клавиатура */}
         <div className="relative w-full px-2">
-          <div className={`grid grid-cols-3 gap-x-6 gap-y-4 w-full transition-all duration-300 ${
-            isLocked ? "opacity-30 blur-[2px] pointer-events-none" : "opacity-100 blur-0"
-          }`}>
+          <div className={`grid grid-cols-3 gap-x-6 gap-y-4 w-full transition-all duration-300 ${isLocked ? "opacity-30 blur-[2px] pointer-events-none" : "opacity-100 blur-0"
+            }`}>
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(num => (
               <button
                 key={num}

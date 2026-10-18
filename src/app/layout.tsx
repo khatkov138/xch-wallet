@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Providers } from "@/providers/Providers"; // Наш импорт провайдера кэша
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,7 +29,10 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex flex-col bg-zinc-950 text-white font-sans select-none">
-        {children}
+        {/* Обертываем все дочерние страницы в контекст TanStack Query */}
+        <Providers>
+          {children}
+        </Providers>
       </body>
     </html>
   );

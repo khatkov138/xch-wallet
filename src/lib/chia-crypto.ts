@@ -12,12 +12,19 @@ const CHIA_TESTNET_PREFIX = 'txch'
 // Официальный сериализованный CLVM-код стандартного кошелька Chia (Wallet Puzzle).
 const STANDARD_WALLET_PUZZLE_HEX = "ff02ffff01ff02ffff03ff0bffff01ff02ff03ffff04ff05ffff04ff0bffff04ff17ff808080808080ffff04ffff01ff33ff3cff05ffc080ffff04ffff01ff01ff808080808080ffff04ffff01ff02ffff03ff05ffff01ff02ff0bffff04ff05ffff04ff0bff8080808080ffff01ff04ff0bff8080808080ffff01ff02ff05ffff04ff05ffff04ff0bff8080808080808080ff0180ffff01ff04ff17ffff04ff05ffff04ff0bff8080808080ff018080"
 
-// ФИКС ОШИБКИ: Безопасно переводим hex-строку в Uint8Array для правильной десериализации атома
+// Безопасно переводим hex-строку в Uint8Array для правильной десериализации атома
 const puzzleBytes = new Uint8Array(
   STANDARD_WALLET_PUZZLE_HEX.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
 )
 // Загружаем программу через чистые байты, что гарантирует совместимость во время module evaluation
 const standardWalletProgram = Program.fromBytes(puzzleBytes)
+
+/**
+ * Вспомогательная функция перевода Uint8Array в Hex-строку (замена Node-зависимому Buffer)
+ */
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+}
 
 /**
  * Переводит хэш публичного ключа (puzzle hash) в Bech32m адрес Chia Network
@@ -47,7 +54,7 @@ export async function getMasterPublicKeyFromMnemonic(mnemonic: string): Promise<
 
 /**
  * НА 100% ОФИЦИАЛЬНАЯ ДЕРИВАЦИЯ АДРЕСА CHIA:
- * 1. Шагает по пути m/12381/8444/2/0
+ * 1. Шагает по Unhardened пути m/12381/8444/2/0 через deriveChildSkUnhardened
  * 2. Обертывает публичный ключ в стандартный CLVM смарт-контракт кошелька (Curry)
  * 3. Хэширует полученный пазл и кодирует в Bech32m
  */
@@ -61,11 +68,12 @@ export async function generateChiaAddressFromMnemonic(mnemonic: string, isTestne
   const cleanSeedBytes = new Uint8Array(seedBuffer)
   const masterPrivateKey = PrivateKey.fromSeed(cleanSeedBytes)
 
-  // 2. Деривируем первый ключ кошелька по официальному пути: m/12381/8444/2/0
-  let derivedKey = AugSchemeMPL.deriveChildSk(masterPrivateKey, 12381)
-  derivedKey = AugSchemeMPL.deriveChildSk(derivedKey, 8444)
-  derivedKey = AugSchemeMPL.deriveChildSk(derivedKey, 2)
-  derivedKey = AugSchemeMPL.deriveChildSkUnhardened(derivedKey, 0)
+  // По спецификации Chia (CIP-34/BIP-44) для Observer-кошельков
+  // все индексы деривации ДОЛЖНЫ быть незакаленными (Unhardened).
+  let derivedKey = AugSchemeMPL.deriveChildSkUnhardened(masterPrivateKey, 12381)
+  derivedKey = AugSchemeMPL.deriveChildSkUnhardened(derivedKey, 8444)
+  derivedKey = AugSchemeMPL.deriveChildSkUnhardened(derivedKey, 2)
+  derivedKey = AugSchemeMPL.deriveChildSkUnhardened(derivedKey, 0) // Первый индекс кошелька (index 0)
 
   const walletPublicKey = derivedKey.getG1()
 
@@ -78,7 +86,7 @@ export async function generateChiaAddressFromMnemonic(mnemonic: string, isTestne
   // 5. Получаем НАСТОЯЩИЙ puzzle_hash (SHA-256 от скомпилированной программы)
   const puzzleHash = walletPuzzle.hash()
 
-  // 6. Кодируем в Bech32m с нужным префиксом (txch1... для тестнета)
+  // 6. Кодируем в Bech32m с нужным префиксом (txch1... для тестнета, xch1... для майннета)
   const activePrefix = isTestnet ? CHIA_TESTNET_PREFIX : CHIA_MAINNET_PREFIX
   return puzzleHashToAddress(puzzleHash, activePrefix)
 }
@@ -97,7 +105,7 @@ export function addressToPuzzleHash(address: string): string {
     const decoded = bech32m.decode(cleanAddress, 100)
     if (decoded.prefix === CHIA_MAINNET_PREFIX || decoded.prefix === CHIA_TESTNET_PREFIX) {
       const words = bech32m.fromWords(decoded.words)
-      return Buffer.from(words).toString("hex")
+      return bytesToHex(new Uint8Array(words))
     }
   } catch (e) { }
 
@@ -105,7 +113,7 @@ export function addressToPuzzleHash(address: string): string {
     const decoded = bech32.decode(cleanAddress, 100)
     if (decoded.prefix === CHIA_MAINNET_PREFIX || decoded.prefix === CHIA_TESTNET_PREFIX) {
       const words = bech32.fromWords(decoded.words)
-      return Buffer.from(words).toString("hex")
+      return bytesToHex(new Uint8Array(words))
     }
   } catch (error: any) {
     throw new Error(`Ошибка декодирования адреса (Bech32/Bech32m): ${error.message}`)

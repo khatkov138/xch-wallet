@@ -1,112 +1,94 @@
 'use client'
 
-import { useState, useEffect, useCallback } from "react"
-import { generateChiaAddressFromMnemonic } from "@/lib/chia-crypto"
+import { useEffect, useCallback } from "react"
+import { useWalletStore } from "@/store/useWalletStore"
+import { generateChiaAddressFromMnemonic } from "@/lib/chia-crypto";
 
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут активности
+const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
 
-export function useWalletAuth(onDataLoaded: (address: string) => void) {
-  const [walletAddress, setWalletAddress] = useState<string>("")
-  const [decryptedPhrase, setDecryptedPhrase] = useState<string>("")
-  const [isVerifying, setIsVerifying] = useState(true)
-  const [isScreenLocked, setIsScreenLocked] = useState(false)
+export function useWalletAuth() {
+  const {
+    walletAddress,
+    decryptedPhrase,
+    isScreenLocked,
+    isVerifying,
+    setWalletData,
+    lockWallet,
+    setVerifying,
+    setScreenLocked
+  } = useWalletStore();
 
-  // Общая функция деривации (вычисляет адрес и отправляет наверх в page.tsx для загрузки баланса)
-  const deriveAndLoad = useCallback(async (clearMnemonic: string) => {
-    try {
-      setDecryptedPhrase(clearMnemonic)
-      
-      // ЧИТАЕМ ФЛАГ ИЗ .ENV: преобразуем строковое "true" в чистый boolean
-      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
-      
-      // Передаем true или false в универсальный крипто-модуль
-      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet)
-      setWalletAddress(derivedAddress)
-
-      // Запускаем загрузку баланса из блокчейна в page.tsx
-      onDataLoaded(derivedAddress)
-    } catch (err) {
-      console.error("Ошибка деривации ключей Chia:", err)
-    }
-  }, [onDataLoaded])
-
-  const lockProfile = useCallback(() => {
-    sessionStorage.removeItem("xcha_session_expires")
-    setDecryptedPhrase("")
-    setIsScreenLocked(true) // Включаем экран ввода ПИН-кода
-  }, [])
-
-  // Эта функция вызывается, когда UnlockPinForm успешно расшифровала сид-фразу введенным ПИН-кодом
+  // Функция разблокировки кошелька
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
-      // 1. Записываем новый токен жизни сессии в sessionStorage
-      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
+      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
 
-      // 2. Передаем полученную расшифрованную фразу в движок деривации адреса
-      await deriveAndLoad(clearMnemonic)
+      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
+      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
 
-      // 3. Открываем шторку сейфа
-      setIsScreenLocked(false)
+      // Пишем данные сразу в глобальный стор
+      setWalletData(derivedAddress, clearMnemonic);
     } catch (error) {
-      console.error("Ошибка при обработке успешного входа:", error)
+      console.error("Ошибка при обработке входа:", error);
     }
-  }, [deriveAndLoad])
+  }, [setWalletData]);
 
-  // Первичная проверка при монтировании (F5 или первый заход)
+  // Первичная проверка сессии при монтировании
   useEffect(() => {
-    const isAuth = localStorage.getItem("xcha_is_auth")
-    const savedMnemonic = localStorage.getItem("xcha_mnemonic")
+    const isAuth = localStorage.getItem("xcha_is_auth");
+    const savedMnemonic = localStorage.getItem("xcha_mnemonic");
 
     if (isAuth !== "true" || !savedMnemonic) {
-      window.location.href = "/"
-      return
+      window.location.href = "/";
+      return;
     }
 
-    const sessionExpires = sessionStorage.getItem("xcha_session_expires")
-    const now = Date.now()
+    const sessionExpires = sessionStorage.getItem("xcha_session_expires");
+    const now = Date.now();
 
     if (!sessionExpires || now > parseInt(sessionExpires, 10)) {
-      setIsScreenLocked(true) // Сессия просрочена — требуем ПИН
+      lockWallet(); // Время вышло или обновили F5 — на замок
     } else {
-      // Если страница обновилась через F5, стейты сбросились в пустые.
-      // Для безопасности оперативки принудительно заставляем ввести ПИН заново, чтобы восстановить ключи.
-      setIsScreenLocked(true)
+      // Для безопасности при F5 (так как оперативка стерлась) требуем ПИН заново
+      lockWallet();
     }
 
-    setIsVerifying(false) 
-  }, [])
+    setVerifying(false);
+  }, [lockWallet, setVerifying]);
 
-  // Логика афк-таймера контроля бездействия пользователя
+  // Контроль бездействия (АФК таймер)
   useEffect(() => {
-    if (isVerifying || isScreenLocked) return
+    if (isVerifying || isScreenLocked) return;
 
-    let timeoutId: NodeJS.Timeout
+    let timeoutId: NodeJS.Timeout;
 
     const resetTimer = () => {
-      clearTimeout(timeoutId)
-      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
-      timeoutId = setTimeout(lockProfile, INACTIVITY_TIMEOUT)
-    }
+      clearTimeout(timeoutId);
+      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
+      timeoutId = setTimeout(lockWallet, INACTIVITY_TIMEOUT);
+    };
 
-    const handleVisibility = () => { if (document.hidden) lockProfile() }
+    const handleVisibility = () => { if (document.hidden) lockWallet(); };
 
-    window.addEventListener("mousemove", resetTimer)
-    window.addEventListener("keydown", resetTimer)
-    window.addEventListener("touchstart", resetTimer)
-    window.addEventListener("click", resetTimer)
-    document.addEventListener("visibilitychange", handleVisibility)
+    const events = ["mousemove", "keydown", "touchstart", "click"];
+    events.forEach(event => window.addEventListener(event, resetTimer));
+    document.addEventListener("visibilitychange", handleVisibility);
 
-    resetTimer()
+    resetTimer();
 
     return () => {
-      clearTimeout(timeoutId)
-      window.removeEventListener("mousemove", resetTimer)
-      window.removeEventListener("keydown", resetTimer)
-      window.removeEventListener("touchstart", resetTimer)
-      window.removeEventListener("click", resetTimer)
-      document.removeEventListener("visibilitychange", handleVisibility)
-    }
-  }, [isVerifying, isScreenLocked, lockProfile])
+      clearTimeout(timeoutId);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [isVerifying, isScreenLocked, lockWallet]);
 
-  return { walletAddress, decryptedPhrase, isVerifying, isScreenLocked, handleUnlockSuccess, deriveAndLoad }
+  return {
+    walletAddress,
+    decryptedPhrase,
+    isVerifying,
+    isScreenLocked,
+    handleUnlockSuccess,
+    lockWallet
+  };
 }
