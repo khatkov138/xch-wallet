@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState } from "react"
-import { useQuery } from "@tanstack/react-query"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 
 import { DashboardHeader } from "./_components/DashboardHeader"
@@ -12,18 +11,11 @@ import { ActivityList } from "./_components/ActivityList"
 import { BackupCard } from "./_components/BackupCard"
 import { UnlockPinForm } from "./_components/UnlockPinForm"
 import { ReceiveModal } from "./_components/ReceiveModal"
-import { handleApi } from "@/lib/utils"
-
-interface BalanceData {
-  xch: number;
-  mojo: number;
-  coin_records: unknown[];
-}
 
 export default function DashboardPage() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
 
-  // Чистый вызов хука авторизации
+  // Чистый вызов хука авторизации сессии кошелька
   const {
     walletAddress,
     decryptedPhrase,
@@ -32,25 +24,7 @@ export default function DashboardPage() {
     handleUnlockSuccess
   } = useWalletAuth()
 
-  // Менеджер баланса через TanStack Query
-  const { data, error, refetch, isFetching } = useQuery<BalanceData>({
-    queryKey: ['walletBalance', walletAddress],
-    queryFn: () => handleApi<BalanceData>(fetch(`/api/chia/balance?address=${walletAddress}`)),
-    enabled: !!walletAddress && !isScreenLocked,
-    refetchInterval: 10000,
-    staleTime: 5000,
-  })
-
-  const realXCH = data?.xch ?? 0
-
-  // УМНАЯ СТАТИЧЕСКАЯ МАСКИРОВКА ОШИБКИ:
-  // Если Танстэк ловит ошибку (например, <!DOCTYPE от выключенной ноды),
-  // мы не ломаем верстку компонента BalanceSection, а просто передаем туда 
-  // аккуратные, подготовленные строки. Разметка остается ТВОЕЙ оригинальной!
-  const balanceXCH = error ? "0.0000" : realXCH.toFixed(4)
-  const balanceUSD = error ? "⚠️ Ошибка: не удалось связаться с сервером" : `≈ $${(realXCH * 2.00).toFixed(2)} USD`
-
-  // 1. Твой ОРИГИНАЛЬНЫЙ экран первичной проверки при загрузке / F5
+  // 1. Экран первичной проверки при загрузке / F5
   if (isVerifying) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
@@ -63,7 +37,7 @@ export default function DashboardPage() {
     )
   }
 
-  // 2. Твой ОРИГИНАЛЬНЫЙ экран блокировки сейфа поверх градиента
+  // 2. Экран блокировки сейфа поверх градиента
   if (isScreenLocked) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
@@ -81,26 +55,18 @@ export default function DashboardPage() {
 
       <div className="relative z-10 w-full max-w-md mx-auto px-6 flex-1 flex flex-col justify-between py-8">
         <div className="w-full space-y-6">
-
           <DashboardHeader />
 
-          {/* ЖЕСТКИЙ ФИКС: Убрали дублирование верстки. Теперь всегда рендерится ТВОЙ оригинальный BalanceSection */}
-          {/* Текст ошибки красиво уходит в нижнюю строчку мелким красным шрифтом (мы завязали её на balanceUSD) */}
-          <BalanceSection
-            balanceXCH={balanceXCH}
-            balanceUSD={balanceUSD}
-            isRefreshing={isFetching}
-            onRefresh={() => refetch()}
-          />
+          {/* Баланс теперь сам знает, как себя запрашивать */}
+          <BalanceSection currentAddress={walletAddress} />
 
           <AddressCard address={walletAddress} />
 
           <ActionButtons onReceiveClick={() => setIsReceiveOpen(true)} />
 
-          <ActivityList />
+          <ActivityList currentAddress={walletAddress} />
 
           <BackupCard mnemonic={decryptedPhrase} />
-
         </div>
 
         <footer className="w-full text-center pt-8">
