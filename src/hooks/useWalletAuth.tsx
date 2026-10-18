@@ -24,10 +24,13 @@ export function useWalletAuth() {
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
 
       const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
+      
+      // Генерируем адрес на клиенте
       const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
 
-      // Пишем данные сразу в глобальный стор
+      // Пишем данные в Zustand. Компоненты автоматически начнут поллинг баланса
       setWalletData(derivedAddress, clearMnemonic);
+
     } catch (error) {
       console.error("Ошибка при обработке входа:", error);
     }
