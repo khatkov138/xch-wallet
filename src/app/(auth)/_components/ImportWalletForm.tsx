@@ -2,9 +2,10 @@
 
 import React, { useState, useEffect } from "react"
 import { ArrowRight, AlertCircle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+
 // @ts-ignore
 import * as bip39 from "bip39"
+import { Button } from "../../../components/ui/button"
 
 // Фиксированный эталонный список слов для плейсхолдеров (полностью убирает рассинхрон SSR/клиент)
 const FIXED_PLACEHOLDERS = [

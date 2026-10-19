@@ -2,8 +2,9 @@
 
 import React from "react"
 import { ShieldCheck, RefreshCw, Check, ArrowRight, Printer } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { PapperWalletPrintout } from "@/app/(dashboard)/dashboard/_components/PapperWalletPrintout"
+
+import { PapperWalletPrintout } from "../../(dashboard)/dashboard/_components/PapperWalletPrintout"
+import { Button } from "../../../components/ui/button"
 
 interface CreateWalletFormProps {
   generatedPhrase: string
@@ -104,8 +105,8 @@ export function CreateWalletForm({
         onClick={onSubmit}
         disabled={!isAgreed}
         className={`w-full font-bold text-sm h-12 rounded-xl transition-all border-none flex items-center justify-center gap-2 print:hidden ${isAgreed
-            ? 'bg-white hover:bg-zinc-200 text-black active:scale-[0.98] cursor-pointer'
-            : 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
+          ? 'bg-white hover:bg-zinc-200 text-black active:scale-[0.98] cursor-pointer'
+          : 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
           }`}
       >
         <span>Создать новый сейф</span>

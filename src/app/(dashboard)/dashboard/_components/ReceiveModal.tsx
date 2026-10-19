@@ -9,7 +9,7 @@ import QRCode from "qrcode"
 // ИСПРАВЛЕНИЕ: Жестко зафиксировали интерфейс пропсов строго под требования page.tsx
 interface ReceiveModalProps {
   isOpen: boolean
-  onClose: () => void
+  onClose: () => void 
   walletAddress: string
 }
 

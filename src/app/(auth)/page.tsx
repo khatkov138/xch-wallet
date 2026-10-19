@@ -6,13 +6,15 @@ import { KeyRound, PlusCircle } from "lucide-react"
 // @ts-ignore
 import * as bip39 from "bip39"
 
-import { Card, CardContent } from "@/components/ui/card"
+
 import { CreateWalletForm } from "./_components/CreateWalletForm"
 import { ImportWalletForm } from "./_components/ImportWalletForm"
 import { PinCodeForm } from "./_components/PinCodeForm"
 import { AuthBackground } from "./_components/AuthBackground"
 import { AuthHeader } from "./_components/AuthHeader"
-import { encryptMnemonic } from "@/lib/crypto"
+
+import { Card, CardContent } from "../../components/ui/card"
+import { encryptMnemonic } from "../../lib/crypto"
 
 export default function AuthPage() {
   const router = useRouter()
