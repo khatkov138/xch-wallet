@@ -44,6 +44,7 @@ export function DashboardHeader() {
           title="Выйти из кошелька"
           className="p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800 text-zinc-500 hover:text-red-400 hover:border-red-500/20 transition-all cursor-pointer active:scale-95"
         >
+          
           <LogOut size={13} />
         </button>
       </div> 
