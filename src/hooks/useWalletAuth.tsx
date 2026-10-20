@@ -2,9 +2,9 @@
 
 import { useEffect, useCallback } from "react"
 import { useWalletStore } from "@/store/useWalletStore"
-import { generateChiaAddressFromMnemonic } from "@/lib/chia-crypto";
+import { generateChiaAddressFromMnemonic, getChiaKeyDebugInfo } from "@/lib/chia-crypto"
 
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
+const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут сессии
 
 export function useWalletAuth() {
   const {
@@ -16,93 +16,112 @@ export function useWalletAuth() {
     lockWallet,
     setVerifying,
     setScreenLocked
-  } = useWalletStore();
+  } = useWalletStore()
 
-  // Функция разблокировки кошелька (ручной ввод ПИН-кода)
+  // Полное отладочное логирование
+  const logCryptoAudit = useCallback(async (clearMnemonic: string) => {
+    try {
+      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
+      const debug = await getChiaKeyDebugInfo(clearMnemonic, isTestnet)
+      
+      console.log("%c 🔑 [XCHA WALLET AUTOMATED AUDIT] ", "background: #FF2E93; color: white; font-weight: bold; padding: 4px; border-radius: 4px;")
+      console.log(`• Твоя фраза: "${clearMnemonic}"`)
+      console.log(`• Master Fingerprint (из ноды ждем 403921831): %c${debug.masterFingerprint}`, "color: #FF2E93; font-weight: bold;")
+      console.log(`• Master Public Key (Hex): ${debug.masterPublicKey}`)
+      console.log(`👉 ВАРИАНТ А (Unhardened): ${debug.addrUnhardened}`)
+      console.log(`👉 ВАРИАНТ Б (Mixed Observer): ${debug.addrMixedObserver}`)
+      console.log(`👉 ВАРИАНТ В (Full Hardened): ${debug.addrFullHardened}`)
+      console.log(`👉 ВАРИАНТ Г (CLI Sk Path): ${debug.addrFirstWalletSk}`)
+      console.log("%c ---------------------------------------------------- ", "color: #52525b;")
+    } catch (e) {
+      console.error("Ошибка дебаг-логирования:", e)
+    }
+  }, [])
+
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
-      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
-      // Сохраняем фразу в сессию, чтобы при последующих F5 она подхватывалась автоматически
-      sessionStorage.setItem("xcha_clear_mnemonic", clearMnemonic);
+      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
+      sessionStorage.setItem("xcha_clear_mnemonic", clearMnemonic)
 
-      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
-      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
+      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
 
-      setWalletData(derivedAddress, clearMnemonic);
+      // Печатаем расширенные логи
+      await logCryptoAudit(clearMnemonic)
+
+      const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet)
+      setWalletData(derivedAddress, clearMnemonic)
+      setScreenLocked(false)
     } catch (error) {
-      console.error("Ошибка при обработке входа:", error);
+      console.error("Ошибка при обработке входа:", error)
     }
-  }, [setWalletData]);
+  }, [setWalletData, setScreenLocked, logCryptoAudit])
 
-  // Первичная проверка сессии при монтировании (включая обработку F5)
   useEffect(() => {
     const initAuth = async () => {
-      const isAuth = localStorage.getItem("xcha_is_auth");
-      const savedMnemonic = localStorage.getItem("xcha_mnemonic");
+      const isAuth = localStorage.getItem("xcha_is_auth")
+      const savedMnemonic = localStorage.getItem("xcha_mnemonic")
 
       if (isAuth !== "true" || !savedMnemonic) {
-        window.location.href = "/";
-        return;
+        window.location.href = "/"
+        return
       }
 
-      const sessionExpires = sessionStorage.getItem("xcha_session_expires");
-      const clearMnemonic = sessionStorage.getItem("xcha_clear_mnemonic");
-      const now = Date.now();
+      const sessionExpires = sessionStorage.getItem("xcha_session_expires")
+      const clearMnemonic = sessionStorage.getItem("xcha_clear_mnemonic")
+      const now = Date.now()
 
-      const isSessionValid = sessionExpires && now < parseInt(sessionExpires, 10);
+      const isSessionValid = sessionExpires && now < parseInt(sessionExpires, 10)
 
       if (isSessionValid && walletAddress) {
-        // Случай 1: Обычный переход по страницам, данные уже в Zustand
-        setScreenLocked(false);
+        setScreenLocked(false)
+        if (clearMnemonic) await logCryptoAudit(clearMnemonic)
       } else if (isSessionValid && clearMnemonic) {
         try {
-          // Случай 2: Был нажат F5. Сессия жива, фразу достаем из sessionStorage
-          const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
-          const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
+          const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
           
-          // Восстанавливаем Zustand на лету
-          setWalletData(derivedAddress, clearMnemonic);
-          setScreenLocked(false);
+          await logCryptoAudit(clearMnemonic)
+
+          const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet)
+          setWalletData(derivedAddress, clearMnemonic)
+          setScreenLocked(false)
         } catch (e) {
-          lockWallet();
+          lockWallet()
         }
       } else {
-        // Случай 3: Время сессии вышло, либо данных в сессии нет — блокируем кошелек
-        lockWallet();
-        sessionStorage.removeItem("xcha_clear_mnemonic");
+        lockWallet()
+        sessionStorage.removeItem("xcha_clear_mnemonic")
       }
 
-      setVerifying(false);
-    };
+      setVerifying(false)
+    }
 
-    initAuth();
-  }, [walletAddress, lockWallet, setVerifying, setScreenLocked, setWalletData]);
+    initAuth()
+  }, [walletAddress, lockWallet, setVerifying, setScreenLocked, setWalletData, logCryptoAudit])
 
-  // Контроль бездействия (АФК таймер)
   useEffect(() => {
-    if (isVerifying || isScreenLocked) return;
+    if (isVerifying || isScreenLocked) return
 
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: NodeJS.Timeout
 
     const resetTimer = () => {
-      clearTimeout(timeoutId);
-      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
+      clearTimeout(timeoutId)
+      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       timeoutId = setTimeout(() => {
-        lockWallet();
-        sessionStorage.removeItem("xcha_clear_mnemonic"); // Стираем при автоблокировке
-      }, INACTIVITY_TIMEOUT);
-    };
+        lockWallet()
+        sessionStorage.removeItem("xcha_clear_mnemonic")
+      }, INACTIVITY_TIMEOUT)
+    }
 
-    const events = ["mousemove", "keydown", "touchstart", "click"];
-    events.forEach(event => window.addEventListener(event, resetTimer));
+    const events = ["mousemove", "keydown", "touchstart", "click"]
+    events.forEach(event => window.addEventListener(event, resetTimer))
 
-    resetTimer();
+    resetTimer()
 
     return () => {
-      clearTimeout(timeoutId);
-      events.forEach(event => window.removeEventListener(event, resetTimer));
-    };
-  }, [isVerifying, isScreenLocked, lockWallet]);
+      clearTimeout(timeoutId)
+      events.forEach(event => window.removeEventListener(event, resetTimer))
+    }
+  }, [isVerifying, isScreenLocked, lockWallet])
 
   return {
     walletAddress,
@@ -111,5 +130,5 @@ export function useWalletAuth() {
     isScreenLocked,
     handleUnlockSuccess,
     lockWallet
-  };
+  }
 }

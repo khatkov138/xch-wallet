@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query"
 import { WalletLayout } from "@/components/WalletLayout"
 import { handleApi } from "@/lib/utils"
 
-// Подключаем твои компоненты
+// Импортируем наши атомарные UI-компоненты
 import { SyncCard } from "./_components/SyncCard"
 import { MetricsGrid } from "./_components/MetricsGrid"
 import { TrafficList } from "./_components/TrafficList"
@@ -37,7 +37,7 @@ export default function StatusPage() {
   const [blocksPerMinute, setBlocksPerMinute] = useState<number>(0)
   const [estimatedTimeLeft, setEstimatedTimeLeft] = useState<string>("Расчет...")
 
-  // Ссылка useRef спасает нас от бесконечного цикла обновлений
+  // Использование useRef предотвращает бесконечные каскадные ререндеры в useEffect
   const prevSnapshotRef = useRef<{ height: number; timestamp: number } | null>(null)
 
   const {
@@ -62,13 +62,16 @@ export default function StatusPage() {
 
     if (prevSnapshot && currentHeight > prevSnapshot.height) {
       const heightDiff = currentHeight - prevSnapshot.height
+      // Вычисляем точную дельту времени между ответами TanStack Query
       const timeDiffMin = (dataUpdatedAt - prevSnapshot.timestamp) / 60000
 
       if (timeDiffMin > 0) {
         const currentBpm = Math.round(heightDiff / timeDiffMin)
+        // Фильтруем аномальные скачки при первом холодном тике
         if (currentBpm > 0 && currentBpm < 5000) {
           setBlocksPerMinute(currentBpm)
 
+          // ДИНАМИЧЕСКИЙ РАСЧЕТ ОСТАВШЕГОСЯ ВРЕМЕНИ ДО ДОСТИЖЕНИЯ 100% СИНХРОНИЗАЦИИ
           if (!statusData.isSynced && currentBpm > 0) {
             const blocksLeft = targetHeight - currentHeight
             const minutesLeft = blocksLeft / currentBpm
@@ -93,11 +96,13 @@ export default function StatusPage() {
       }
     }
 
+    // Если нода полностью догнала блокчейн, сбрасываем расчетные стейты
     if (statusData.isSynced) {
       setEstimatedTimeLeft("Синхронизировано")
       setBlocksPerMinute(0)
     }
 
+    // Фиксируем снимок для расчета BPM на следующем тике поллинга
     prevSnapshotRef.current = {
       height: currentHeight,
       timestamp: dataUpdatedAt
@@ -106,12 +111,14 @@ export default function StatusPage() {
 
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 text-white font-sans antialiased overflow-hidden flex flex-col justify-between">
+      {/* Декоративные размытые неоновые градиенты по дизайн-системе XCHA Wallet */}
       <div className="absolute top-[-10%] right-[-20%] w-[130%] h-[50vh] bg-gradient-to-bl from-[#B82EFF]/15 via-[#FF2E93]/5 to-transparent blur-[130px] pointer-events-none z-0" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[80vw] h-[50vh] bg-[#FF2E93]/5 blur-[120px] pointer-events-none z-0" />
 
       <WalletLayout variant="dashboard">
         <div className="w-full max-w-md mx-auto px-6 space-y-5 select-none relative z-10">
 
+          {/* Верхняя навигационная панель */}
           <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4 text-[#FF2E93]" />
@@ -128,6 +135,7 @@ export default function StatusPage() {
             </Link>
           </div>
 
+          {/* Индикатор сетевой ошибки (Шлюз RPC недоступен) */}
           {nodeError && (
             <div className="p-4 rounded-2xl bg-zinc-900/30 border border-red-500/20 text-red-400 space-y-3 animate-in fade-in zoom-in-95 duration-200 shadow-lg shadow-red-950/10">
               <div className="flex items-center justify-between">
@@ -154,6 +162,7 @@ export default function StatusPage() {
             </div>
           )}
 
+          {/* Состояние скелетона / загрузки при первом открытии */}
           {!statusData && !nodeError && (
             <div className="py-14 flex flex-col items-center justify-center gap-3 text-center">
               <div className="w-5 h-5 border-2 border-zinc-700 border-t-[#FF2E93] rounded-full animate-spin" />
@@ -163,9 +172,13 @@ export default function StatusPage() {
             </div>
           )}
 
+          {/* Основной контент (рендерится только при успешном ответе BFF) */}
           {statusData && (
             <div className="space-y-4 animate-in fade-in duration-300">
+              
+              {/* Карточка синхронизации с поддержкой поля network */}
               <SyncCard
+                network={statusData.network}
                 isSynced={statusData.isSynced}
                 isSyncingMode={statusData.isSyncingMode}
                 currentHeight={statusData.currentHeight}
@@ -174,28 +187,37 @@ export default function StatusPage() {
                 estimatedTimeLeft={estimatedTimeLeft}
               />
 
-              {/* Рендерим твой оригинальный компонент */}
+              {/* Сетка метрик: Скорость ноды и подключения (твоя палитра) */}
               <MetricsGrid
                 blocksPerMinute={blocksPerMinute}
                 totalPeers={statusData.totalPeers}
               />
 
+              {/* Системные показатели сети Chia — данные полностью завязаны на твой RPC-сервер */}
               <div className="p-4 rounded-xl bg-zinc-900/20 border border-zinc-800/50 space-y-2.5 text-[11px] font-medium text-zinc-400">
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500">Объем сети (Netspace):</span>
-                  <span className="font-mono text-zinc-300 font-bold">{statusData.networkSpaceTib} TiB</span>
+                  <span className="font-mono text-zinc-300 font-bold">
+                    {statusData.networkSpaceTib} TiB
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500">Сложность (Difficulty):</span>
-                  <span className="font-mono text-zinc-300 font-bold">{statusData.difficulty.toLocaleString()}</span>
+                  <span className="font-mono text-zinc-300 font-bold">
+                    {statusData.difficulty.toLocaleString()}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-zinc-500">Время пикового блока:</span>
-                  <span className="font-mono text-zinc-300 font-bold">{statusData.peakTime}</span>
+                  <span className="font-mono text-zinc-300 font-bold text-right max-w-[190px] truncate">
+                    {statusData.peakTime}
+                  </span>
                 </div>
               </div>
 
+              {/* Список активных пиров и сетевого трафика */}
               <TrafficList peersList={statusData.peersList} />
+              
             </div>
           )}
         </div>
