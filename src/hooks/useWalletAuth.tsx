@@ -18,46 +18,65 @@ export function useWalletAuth() {
     setScreenLocked
   } = useWalletStore();
 
-  // Функция разблокировки кошелька
+  // Функция разблокировки кошелька (ручной ввод ПИН-кода)
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
+      // Сохраняем фразу в сессию, чтобы при последующих F5 она подхватывалась автоматически
+      sessionStorage.setItem("xcha_clear_mnemonic", clearMnemonic);
 
       const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
-      
-      // Генерируем адрес на клиенте
       const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
 
-      // Пишем данные в Zustand. Компоненты автоматически начнут поллинг баланса
       setWalletData(derivedAddress, clearMnemonic);
-
     } catch (error) {
       console.error("Ошибка при обработке входа:", error);
     }
   }, [setWalletData]);
 
-  // Первичная проверка сессии при монтировании
+  // Первичная проверка сессии при монтировании (включая обработку F5)
   useEffect(() => {
-    const isAuth = localStorage.getItem("xcha_is_auth");
-    const savedMnemonic = localStorage.getItem("xcha_mnemonic");
+    const initAuth = async () => {
+      const isAuth = localStorage.getItem("xcha_is_auth");
+      const savedMnemonic = localStorage.getItem("xcha_mnemonic");
 
-    if (isAuth !== "true" || !savedMnemonic) {
-      window.location.href = "/";
-      return;
-    }
+      if (isAuth !== "true" || !savedMnemonic) {
+        window.location.href = "/";
+        return;
+      }
 
-    const sessionExpires = sessionStorage.getItem("xcha_session_expires");
-    const now = Date.now();
+      const sessionExpires = sessionStorage.getItem("xcha_session_expires");
+      const clearMnemonic = sessionStorage.getItem("xcha_clear_mnemonic");
+      const now = Date.now();
 
-    if (!sessionExpires || now > parseInt(sessionExpires, 10)) {
-      lockWallet(); // Время вышло или обновили F5 — на замок
-    } else {
-      // Для безопасности при F5 (так как оперативка стерлась) требуем ПИН заново
-      lockWallet();
-    }
+      const isSessionValid = sessionExpires && now < parseInt(sessionExpires, 10);
 
-    setVerifying(false);
-  }, [lockWallet, setVerifying]);
+      if (isSessionValid && walletAddress) {
+        // Случай 1: Обычный переход по страницам, данные уже в Zustand
+        setScreenLocked(false);
+      } else if (isSessionValid && clearMnemonic) {
+        try {
+          // Случай 2: Был нажат F5. Сессия жива, фразу достаем из sessionStorage
+          const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
+          const derivedAddress = await generateChiaAddressFromMnemonic(clearMnemonic, isTestnet);
+          
+          // Восстанавливаем Zustand на лету
+          setWalletData(derivedAddress, clearMnemonic);
+          setScreenLocked(false);
+        } catch (e) {
+          lockWallet();
+        }
+      } else {
+        // Случай 3: Время сессии вышло, либо данных в сессии нет — блокируем кошелек
+        lockWallet();
+        sessionStorage.removeItem("xcha_clear_mnemonic");
+      }
+
+      setVerifying(false);
+    };
+
+    initAuth();
+  }, [walletAddress, lockWallet, setVerifying, setScreenLocked, setWalletData]);
 
   // Контроль бездействия (АФК таймер)
   useEffect(() => {
@@ -68,21 +87,20 @@ export function useWalletAuth() {
     const resetTimer = () => {
       clearTimeout(timeoutId);
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString());
-      timeoutId = setTimeout(lockWallet, INACTIVITY_TIMEOUT);
+      timeoutId = setTimeout(() => {
+        lockWallet();
+        sessionStorage.removeItem("xcha_clear_mnemonic"); // Стираем при автоблокировке
+      }, INACTIVITY_TIMEOUT);
     };
-
-    const handleVisibility = () => { if (document.hidden) lockWallet(); };
 
     const events = ["mousemove", "keydown", "touchstart", "click"];
     events.forEach(event => window.addEventListener(event, resetTimer));
-    document.addEventListener("visibilitychange", handleVisibility);
 
     resetTimer();
 
     return () => {
       clearTimeout(timeoutId);
       events.forEach(event => window.removeEventListener(event, resetTimer));
-      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [isVerifying, isScreenLocked, lockWallet]);
 
