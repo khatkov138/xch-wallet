@@ -3,8 +3,6 @@
 import React, { useState } from "react"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 
-// Компоненты дашборда и шаблона
-
 import { ActionButtons } from "./_components/ActionButtons"
 import { BalanceSection } from "./_components/BalanceSection"
 import { AddressCard } from "./_components/AddressCard"
@@ -17,7 +15,6 @@ import { WalletLayout } from "@/components/WalletLayout"
 export default function DashboardPage() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
 
-  // Чистый вызов нашего исправленного хука авторизации
   const {
     walletAddress,
     decryptedPhrase,
@@ -26,7 +23,6 @@ export default function DashboardPage() {
     handleUnlockSuccess
   } = useWalletAuth()
 
-  // 1. Экран первичной проверки при загрузке / F5
   if (isVerifying) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
@@ -39,7 +35,6 @@ export default function DashboardPage() {
     )
   }
 
-  // 2. Экран блокировки сейфа поверх градиента (при АФК или F5)
   if (isScreenLocked) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
@@ -49,24 +44,20 @@ export default function DashboardPage() {
     )
   }
 
-  // 3. Основной рабочий экран Дашборда на базе WalletLayout
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 text-white font-sans antialiased overflow-hidden flex flex-col justify-between">
-      {/* Неоновые фоны сохранены строго на своих местах */}
       <div className="absolute top-[-10%] right-[-20%] w-[130%] h-[50vh] bg-gradient-to-bl from-[#B82EFF]/15 via-[#FF2E93]/5 to-transparent blur-[130px] pointer-events-none z-0" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[80vw] h-[50vh] bg-[#FF2E93]/5 blur-[120px] pointer-events-none z-0" />
 
       <WalletLayout variant="dashboard">
         <div className="w-full space-y-6">
           <BalanceSection currentAddress={walletAddress} />
-
           <AddressCard address={walletAddress} />
-
           <ActionButtons onReceiveClick={() => setIsReceiveOpen(true)} />
-
           <ActivityList currentAddress={walletAddress} />
-
-          <BackupCard mnemonic={decryptedPhrase} />
+          
+          {/* Фраза просто прокидывается внутрь */}
+          <BackupCard mnemonic={decryptedPhrase} walletAddress={walletAddress} />
         </div>
       </WalletLayout>
 

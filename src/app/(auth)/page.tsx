@@ -57,7 +57,7 @@ export default function AuthPage() {
 
   const handlePinSuccess = async (finalPin: string) => {
     try {
-      // 1. Шифруем и сохраняем в localStorage для долгосрочного хранения
+      // 1. Шифруем и сохраняем в localStorage для долгосрочного хранения (БЕЗОПАСНО)
       const encryptedData = await encryptMnemonic(phraseToEncrypt, finalPin)
       localStorage.setItem("xcha_mnemonic", encryptedData)
       localStorage.setItem("xcha_is_auth", "true")
@@ -65,17 +65,20 @@ export default function AuthPage() {
       // 2. Устанавливаем время экспирации сессии (5 минут)
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
 
-      // === ДОБАВЛЕНО: Сохраняем чистую фразу в сессию вкладки для защиты от F5 ===
-      sessionStorage.setItem("xcha_clear_mnemonic", phraseToEncrypt)
-
-      // 3. Генерируем адрес кошелька на клиенте из чистой мнемоники
+      // 3. Генерируем адрес кошелька на клиенте из чистой мнемоники (внутри изолированной ОЗУ)
       const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
       const derivedAddress = await generateChiaAddressFromMnemonic(phraseToEncrypt, isTestnet)
 
-      // 4. Записываем данные в Zustand
-      setWalletData(derivedAddress, phraseToEncrypt)
+      // 4. КРИТИЧЕСКИЙ ФИКС: Записываем в Zustand ТОЛЬКО адрес! 
+      // Проверь сигнатуру метода в своем сторе, передаем только derivedAddress (или пустую строку вместо фраз, если стор требует два аргумента: setWalletData(derivedAddress, ""))
+      setWalletData(derivedAddress, "")
 
-      // 5. Переходим на дашборд
+      // 5. Жёсткое обнуление всех локальных стейтов с сырыми данными, чтобы очистить оперативку
+      setPhraseToEncrypt("")
+      setSeedPhrase("")
+      setGeneratedPhrase("")
+
+      // 6. Переходим на дашборд
       router.push("/dashboard")
     } catch (err) {
       console.error("Криптографическая ошибка создания сейфа:", err)

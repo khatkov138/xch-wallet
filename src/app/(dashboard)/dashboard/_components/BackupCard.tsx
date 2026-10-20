@@ -52,7 +52,6 @@ export function BackupCard({ mnemonic, walletAddress = "" }: BackupCardProps) {
 
   return (
     <>
-      {/* Класс print:hidden теперь жестко скроет саму карточку бэкапа на принтере */}
       <Card className="bg-zinc-900/30 border border-zinc-900 rounded-[24px] shadow-xl overflow-hidden print:hidden">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center justify-between">
@@ -109,10 +108,11 @@ export function BackupCard({ mnemonic, walletAddress = "" }: BackupCardProps) {
                   <button
                     onClick={copyMpk}
                     disabled={isMpkLoading || !masterPublicKey}
-                    className={`flex items-center gap-1 text-[9px] font-bold bg-zinc-950/60 px-2 py-0.5 rounded-md border border-zinc-850 transition-all ${masterPublicKey && !isMpkLoading
+                    className={`flex items-center gap-1 text-[9px] font-bold bg-zinc-950/60 px-2 py-0.5 rounded-md border border-zinc-850 transition-all ${
+                      masterPublicKey && !isMpkLoading
                         ? "text-zinc-400 hover:text-white cursor-pointer active:scale-95"
                         : "text-zinc-600 border-zinc-900 cursor-not-allowed opacity-50"
-                      }`}
+                    }`}
                   >
                     {copiedMpk ? <Check size={9} className="text-emerald-400" /> : <Copy size={9} />}
                     <span>{copiedMpk ? "Скопирован" : "Copy MPK"}</span>
@@ -139,10 +139,7 @@ export function BackupCard({ mnemonic, walletAddress = "" }: BackupCardProps) {
         </CardContent>
       </Card>
 
-      {/* ФИКС: Вынесли за пределы Card. Теперь при печати покажется ТОЛЬКО этот чистый лист */}
       <PapperWalletPrintout mnemonic={mnemonic} walletAddress={walletAddress} />
     </>
   )
 }
-
-

@@ -2,33 +2,33 @@ import { create } from 'zustand'
 
 interface WalletState {
   walletAddress: string;
-  decryptedPhrase: string;
   isScreenLocked: boolean;
   isVerifying: boolean;
-  setWalletData: (address: string, phrase: string) => void;
+  // Сохраняем сигнатуру метода для обратной совместимости, но игнорируем второй аргумент
+  setWalletData: (address: string, phrase?: string) => void;
   lockWallet: () => void;
   setVerifying: (status: boolean) => void;
   setScreenLocked: (status: boolean) => void;
 }
- 
+
 export const useWalletStore = create<WalletState>((set) => ({
   walletAddress: '',
-  decryptedPhrase: '',
   isScreenLocked: true, // По умолчанию всегда заблокировано для безопасности
-  isVerifying: true, 
+  isVerifying: true,
 
-  setWalletData: (address, phrase) => set({ 
-    walletAddress: address, 
-    decryptedPhrase: phrase,
-    isScreenLocked: false 
+  setWalletData: (address) => set({
+    walletAddress: address,
+    isScreenLocked: false
   }),
 
   lockWallet: () => {
-    sessionStorage.removeItem("xcha_session_expires");
-    set({ 
-      walletAddress: '', 
-      decryptedPhrase: '', 
-      isScreenLocked: true 
+    // Безопасное уничтожение сессионных меток
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem("xcha_session_expires");
+    }
+    set({
+      walletAddress: '',
+      isScreenLocked: true
     });
   },
 
