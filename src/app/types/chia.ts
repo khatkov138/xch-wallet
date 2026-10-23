@@ -9,9 +9,9 @@ export interface CleanTransaction {
 
 // Единственное место описания баланса
 export interface BalanceData {
-  xch: number;
-  mojo: number;
-  coin_records: unknown[];
+  xch: string;
+  mojo: string;
+  coin_records: any[]; // Ваша структура ChiaCoinRecord
 }
 
 // Общие переиспользуемые хелперы форматирования данных

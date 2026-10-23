@@ -51,13 +51,13 @@ export default function DashboardPage() {
 
       <WalletLayout variant="dashboard">
         <div className="w-full space-y-6">
-          <BalanceSection currentAddress={walletAddress} />
+          {/* <BalanceSection currentAddress={walletAddress} />*/}
           <AddressCard address={walletAddress} />
           <ActionButtons onReceiveClick={() => setIsReceiveOpen(true)} />
-          <ActivityList currentAddress={walletAddress} />
-          
-          {/* Фраза просто прокидывается внутрь */}
-          <BackupCard mnemonic={decryptedPhrase} walletAddress={walletAddress} />
+          {/*<ActivityList currentAddress={walletAddress} />*/}
+
+          {/* Фраза просто прокидывается внутрь  <BackupCard mnemonic={decryptedPhrase} walletAddress={walletAddress} />*/}
+
         </div>
       </WalletLayout>
 

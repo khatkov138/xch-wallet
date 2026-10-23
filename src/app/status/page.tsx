@@ -48,7 +48,7 @@ export default function StatusPage() {
     dataUpdatedAt
   } = useQuery<NodeStatus>({
     queryKey: ['chiaNodeStatus'],
-    queryFn: () => handleApi<NodeStatus>(fetch("/api/rpc/node-status")),
+    queryFn: () => handleApi<NodeStatus>(fetch("/api/chia/rpc/node-status")),
     refetchInterval: 3000,
     staleTime: 2000,
   })

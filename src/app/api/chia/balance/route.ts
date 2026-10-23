@@ -3,21 +3,21 @@ import fs from "fs"
 import path from "path"
 import https from "https"
 import os from "os"
-import { addressToPuzzleHash } from "@/lib/chia-crypto"
+// Импортируем стандартный bech32м, чтобы не тащить костыли из старой chia-crypto
+import { bech32m } from "bech32"
 import { createApiResponse } from "@/lib/server-utils"
 
 // Отключаем панику Node.js из-за самоподписанных SSL-сертификатов локальной ноды Chia
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-// Интерфейс монеты из RPC ответа Full Node (метод get_coin_records_by_puzzle_hash)
 interface ChiaCoinRecord {
-  amount: number;
-  spent_height: number;
-  confirmed_height: number;
+  amount: number | string;
+  spent_height?: number;
+  confirmed_height?: number;
   coinbase: boolean;
   id: string; 
   coin: {
-    amount: number;
+    amount: number | string;
     parent_coin_info: string;
     puzzle_hash: string;
   };
@@ -25,7 +25,6 @@ interface ChiaCoinRecord {
   [key: string]: unknown;
 }
 
-// Строгая типизация ответов от самого RPC-сервера Full Node
 interface ChiaRpcBalanceSuccess {
   success: true;
   coin_records: ChiaCoinRecord[];
@@ -38,85 +37,108 @@ interface ChiaRpcBalanceError {
 
 type ChiaRpcBalanceResult = ChiaRpcBalanceSuccess | ChiaRpcBalanceError;
 
-// Интерфейс для финальных данных, которые вернутся в поле `data` шаблона createApiResponse
 interface BalanceSuccessResponse {
-  xch: number;
-  mojo: number;
+  xch: string;
+  mojo: string;
   coin_records: ChiaCoinRecord[];
+}
+
+const MOJO_PER_XCH = 1000000000000n;
+
+/**
+ * Конвертирует BigInt Mojo в строковое представление XCH без потери точности float
+ */
+function formatMojoToXch(mojo: bigint): string {
+  const mojoStr = mojo.toString();
+  if (mojo === 0n) return "0";
+  
+  if (mojo < MOJO_PER_XCH) {
+    const padded = mojoStr.padStart(12, "0");
+    return `0.${padded}`.replace(/\.?0+$/, "");
+  }
+  
+  const integerPart = mojoStr.slice(0, -12);
+  const fractionalPart = mojoStr.slice(-12).replace(/0+$/, "");
+  
+  return fractionalPart.length > 0 ? `${integerPart}.${fractionalPart}` : integerPart;
+}
+
+/**
+ * НАИБОЛЕЕ НАДЕЖНЫЙ ПЕРЕВОД АДРЕСА XCH В PUZZLE HASH НА ЧИСТОМ JS
+ */
+function safeAddressToPuzzleHash(address: string): string {
+  const decoded = bech32m.decode(address);
+  const words = bech32m.fromWords(decoded.words);
+  return Buffer.from(words).toString("hex");
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url)
   const address = searchParams.get("address")
 
-  console.log(`\n[CHIA FULL NODE BALANCE] === СТАРТ ЗАПРОСА БАЛАНСА ===`)
-  console.log(`[CHIA FULL NODE BALANCE] Получен адрес из браузера: "${address}"`)
+  console.log(`\n[CHIA FULL NODE BALANCE] ==========================================`)
+  console.log(`[CHIA FULL NODE BALANCE] [START] Инициализация запроса баланса`)
+  console.log(`[CHIA FULL NODE BALANCE] [INPUT] Входящий адрес: "${address}"`)
 
-  // Первичная базовая валидация адреса перед запуском тяжелой логики
   if (!address || (!address.startsWith("xch1") && !address.startsWith("txch1"))) {
-    console.log(`[CHIA FULL NODE BALANCE] ОШИБКА: Неверный формат адреса (не xch1 и не txch1)`)
+    console.log(`[CHIA FULL NODE BALANCE] [VALIDATION ERROR] Неверный формат адреса: "${address}"`)
     return NextResponse.json({
       success: false,
       data: null,
-      error: "Valid Chia address (Mainnet or Testnet) is required"
+      error: "Valid Chia address (xch1... or txch1...) is required"
     }, { status: 400 })
   }
 
-  // Обертываем всю внутреннюю логику и mTLS запросы в шаблон createApiResponse
   return createApiResponse<BalanceSuccessResponse>(async () => {
     const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
     const networkFolder = isTestnet ? "testnet11" : "mainnet"
     
-    // Кроссплатформенное определение домашней директории для Windows/Linux
     const homeDir = process.env.USERPROFILE || os.homedir() || process.env.HOME || "C:\\Users\\khatk";
+    console.log(`[CHIA FULL NODE BALANCE] [ENV] Домашний каталог системы: ${homeDir}`)
 
-    // 1. Попытка загрузить путь на основе текущей активной сети из .env
     let sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "full_node")
     let certPath = path.join(sslPath, "private_full_node.crt")
     let keyPath = path.join(sslPath, "private_full_node.key")
 
-    // 2. УМНЫЙ ФОЛЛБЭК: Если для тестнета нет папки или ключей, забираем рабочие сертификаты из mainnet
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      console.log(`[CHIA FULL NODE BALANCE] Сертификаты в ${networkFolder} не найдены. Переключаемся на фоллбэк в mainnet...`)
+      console.log(`[CHIA FULL NODE BALANCE] [CERT WARN] Сертификаты в ${networkFolder} отсутствуют. Пробуем фоллбэк в mainnet...`)
       sslPath = path.join(homeDir, ".chia", "mainnet", "config", "ssl", "full_node")
       certPath = path.join(sslPath, "private_full_node.crt")
       keyPath = path.join(sslPath, "private_full_node.key")
     }
 
-    // 3. ЖЕСТКИЙ WINDOWS ФОЛЛБЭК (на случай аномалий с os.homedir)
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      console.log(`[CHIA FULL NODE BALANCE] [CERT WARN] Стандартные пути не сработали. Жесткий фоллбэк на аккаунт khatk...`)
       sslPath = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node`
       certPath = path.join(sslPath, "private_full_node.crt")
       keyPath = path.join(sslPath, "private_full_node.key")
     }
 
-    // Финальная проверка доступности файлов перед mTLS рукопожатием
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      throw new Error(`SSL-сертификаты Full Node полностью отсутствуют в системе.`)
+      console.error(`[CHIA FULL NODE BALANCE] [CRITICAL ERROR] SSL сертификаты ноды Chia не обнаружены в системе.`)
+      throw new Error(`SSL-сертификаты Full Node полностью отсутствуют в системе. Проверьте установку Chia Network.`)
     }
 
-    console.log(`[CHIA FULL NODE BALANCE] Успешно инициализированы ключи по пути: ${sslPath}`)
+    console.log(`[CHIA FULL NODE BALANCE] [CERT SUCCESS] Использованы сертификаты: ${sslPath}`)
 
     const cert = fs.readFileSync(certPath)
     const key = fs.readFileSync(keyPath)
     const agent = new https.Agent({ cert, key, rejectUnauthorized: false })
 
-    // Переводим входящий адрес в puzzle hash и гарантируем префикс "0x"
-    let pHash = addressToPuzzleHash(address)
+    // Чистый перевод адреса в пазл-хэш через нативный bech32m без левых библиотек
+    let pHash = safeAddressToPuzzleHash(address)
     if (!pHash.startsWith("0x")) {
       pHash = "0x" + pHash
     }
-    console.log(`[CHIA FULL NODE BALANCE] Сгенерирован Puzzle Hash: ${pHash}`)
+    console.log(`[CHIA FULL NODE BALANCE] [CRYPTO] Преобразован Puzzle Hash: ${pHash}`)
 
-    // RPC payload для метода Full Node
     const rpcPayload = JSON.stringify({
       puzzle_hash: pHash,
-      include_spent_coins: false // Берем только живые UTXO (unspent)
+      include_spent_coins: false
     })
 
-    console.log(`[CHIA FULL NODE BALANCE] Отправка POST на https://localhost:8555/get_coin_records_by_puzzle_hash ...`)
+    console.log(`[CHIA FULL NODE BALANCE] [RPC REQUEST] POST -> https://localhost:8555/get_coin_records_by_puzzle_hash`)
 
-    // Асинхронный mTLS запрос к Full Node
     const nodeResponseData = await new Promise<ChiaRpcBalanceResult>((resolve, reject) => {
       const req = https.request(
         "https://localhost:8555/get_coin_records_by_puzzle_hash",
@@ -128,59 +150,66 @@ export async function GET(request: Request): Promise<NextResponse> {
             "Content-Length": Buffer.byteLength(rpcPayload, "utf8")
           },
           agent: agent,
-          timeout: 5000
+          timeout: 10000
         },
         (res) => {
-          console.log(`[CHIA FULL NODE BALANCE] Ответ от Full Node получен. HTTP Статус: ${res.statusCode}`)
-          let chunks = ""
-          res.on("data", (chunk: string) => { chunks += chunk })
+          console.log(`[CHIA FULL NODE BALANCE] [RPC RESPONSE] HTTP Статус: ${res.statusCode}`)
+          
+          const chunks: Buffer[] = []
+          res.on("data", (chunk: Buffer) => { chunks.push(chunk) })
           res.on("end", () => {
             try {
-              resolve(JSON.parse(chunks) as ChiaRpcBalanceResult)
-            } catch {
+              const completeBuffer = Buffer.concat(chunks)
+              const parsed = JSON.parse(completeBuffer.toString("utf8")) as ChiaRpcBalanceResult
+              resolve(parsed)
+            } catch (parseError) {
+              console.error(`[CHIA FULL NODE BALANCE] [PARSE ERROR] Не удалось распарсить JSON ответ от ноды`)
               reject(new Error(`Критическая ошибка парсинга JSON ответа Full Node`))
             }
           })
         }
       )
 
-      req.on("timeout", () => { req.destroy(); reject(new Error("Превышено время ожидания ответа от Full Node Chia (Timeout)")) })
-      req.on("error", (err: Error) => reject(err))
+      req.on("timeout", () => { 
+        req.destroy()
+        reject(new Error("Превышено время ожидания ответа от Full Node Chia (Timeout)")) 
+      })
+      
+      req.on("error", (err: Error) => {
+        console.error(`[CHIA FULL NODE BALANCE] [NET ERROR] Ошибка сокета mTLS:`, err.message)
+        reject(err)
+      })
+      
       req.write(rpcPayload, "utf8")
       req.end()
     })
 
-    // Если нода вернула success: false, выбрасываем ошибку, чтобы её перехватил шаблон createApiResponse
     if (!nodeResponseData.success) {
-      console.log(`[CHIA FULL NODE BALANCE] ОШИБКА метода get_coin_records_by_puzzle_hash: ${nodeResponseData.error}`)
-      throw new Error(nodeResponseData.error || "Full Node RPC Error")
+      console.error(`[CHIA FULL NODE BALANCE] [RPC ERROR] Ошибка метода: ${nodeResponseData.error}`)
+      throw new Error(nodeResponseData.error || "Full Node RPC Internal Error")
     }
 
-    console.log(`[CHIA FULL NODE BALANCE] Ответ Full Node успешно получен.`)
-
     const coinRecords = nodeResponseData.coin_records || []
-    console.log(`[CHIA FULL NODE BALANCE] Найдено записей монет в Full Node: ${coinRecords.length}`)
+    console.log(`[CHIA FULL NODE BALANCE] [DATA] Всего записей монет пришло из ноды: ${coinRecords.length}`)
 
-    // Считаем сумму чистых (непотраченных) монет
-    let totalMojo = 0
-    coinRecords.forEach((record: ChiaCoinRecord) => {
-      if (record && !record.spent && record.spent_height === 0) {
-        const amount = record.coin?.amount ?? record.amount;
-        if (typeof amount === 'number') {
-          totalMojo += amount
-        }
+    // Высокоточное суммирование непотраченных UTXO
+    let totalMojo = 0n
+    const unspentCoins: ChiaCoinRecord[] = []
+
+    for (const record of coinRecords) {
+      if (!record.spent) {
+        totalMojo += BigInt(record.coin.amount)
+        unspentCoins.push(record)
       }
-    })
+    }
 
-    const totalXch = totalMojo / 1_000_000_000_000
-    console.log(`[CHIA FULL NODE BALANCE] УСПЕХ -> Баланс посчитан через Full Node! Mojo: ${totalMojo} | XCH: ${totalXch}`)
-    console.log(`[CHIA FULL NODE BALANCE] === КОНЕЦ УСПЕШНОГО ЗАПРОСА ===\n`)
+    const formattedXch = formatMojoToXch(totalMojo)
+    console.log(`[CHIA FULL NODE BALANCE] [SUCCESS] Баланс: ${formattedXch} XCH (${totalMojo.toString()} mojo)`)
 
-    // Возвращаем чистый объект для хелпера бэкенда
     return {
-      xch: totalXch,
-      mojo: totalMojo,
-      coin_records: coinRecords
+      xch: formattedXch,
+      mojo: totalMojo.toString(),
+      coin_records: unspentCoins
     }
   })
 }
