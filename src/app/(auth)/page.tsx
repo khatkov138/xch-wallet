@@ -1,14 +1,18 @@
 'use client'
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { KeyRound, PlusCircle } from "lucide-react"
 // @ts-ignore
 import * as bip39 from "bip39"
+import chiaBls from 'chia-bls'
 
-// Импортируем Zustand-стор и метод деривации адреса Chia
+const { PrivateKey, AugSchemeMPL } = chiaBls
+const CHIA_PORT = 12381
+const CHIA_COIN = 8444
+
+// Импортируем Zustand-стор
 import { useWalletStore } from "@/store/useWalletStore"
-import { generateChiaAddressFromMnemonic } from "@/lib/chia-crypto"
 
 // Компоненты форм и шаблона
 import { CreateWalletForm } from "./_components/CreateWalletForm"
@@ -21,6 +25,22 @@ import { encryptMnemonic } from "@/lib/crypto"
 import { Card, CardContent } from "@/components/ui/card"
 
 const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут для сессии
+
+function derivePath(masterSk: any, path: number[]) {
+  let currentSk = masterSk
+  for (const index of path) {
+    currentSk = AugSchemeMPL.deriveChildSk(currentSk, index)
+  }
+  return currentSk
+}
+
+function derivePathUnhardened(masterSk: any, path: number[]) {
+  let currentSk = masterSk
+  for (const index of path) {
+    currentSk = AugSchemeMPL.deriveChildSkUnhardened(currentSk, index)
+  }
+  return currentSk
+}
 
 export default function AuthPage() {
   const router = useRouter()
@@ -47,6 +67,50 @@ export default function AuthPage() {
     generateNewWalletWords()
   }, [])
 
+  // =========================================================================
+  // ПОЛНЫЙ КРИПТОГРАФИЧЕСКИЙ АУДИТ ДЛЯ ЭКРАНА ВХОДА/РЕГИСТРАЦИИ
+  // =========================================================================
+  const logCryptoAudit = useCallback((clearMnemonic: string) => {
+    try {
+      const seed = bip39.mnemonicToSeedSync(clearMnemonic)
+      const master_sk = PrivateKey.fromSeed(seed)
+      const master_sk_hex = master_sk.toHex()
+
+      const master_pk = master_sk.getG1()
+      const master_pk_hex = master_pk.toHex()
+      const fingerprint = master_pk.getFingerprint()
+
+      const farmer_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 0, 0])
+      const farmer_pk_hex = farmer_sk.getG1().toHex()
+
+      const pool_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 1, 0])
+      const pool_pk_hex = pool_sk.getG1().toHex()
+
+      const wallet_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0])
+      const wallet_sk_hex = wallet_sk.toHex()
+
+      const unhardened_wallet_sk = derivePathUnhardened(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0])
+      const unhardened_wallet_pk = unhardened_wallet_sk.getG1()
+      const unhardened_wallet_pk_hex = Buffer.from(unhardened_wallet_pk.toBytes()).toString('hex')
+
+      console.log("%c 🔑 [XCHA REGISTRATION CRYPTO AUDIT] ", "background: #B82EFF; color: white; font-weight: bold; padding: 4px; border-radius: 4px;")
+      console.log(`1. Mnemonic: "${clearMnemonic}"`)
+      console.log(`2. Master SK Hex: ${master_sk_hex}`)
+      console.log(`3. Master PK Hex: ${master_pk_hex}`)
+      console.log(`4. Fingerprint: ${fingerprint}`)
+      console.log(`5. Farmer PK Hex: ${farmer_pk_hex}`)
+      console.log(`6. Pool PK Hex: ${pool_pk_hex}`)
+      console.log(`7. Wallet SK Hex (Hardened): ${wallet_sk_hex}`)
+      console.log(`🚀 ИТОГОВЫЙ ПАБЛИК ДЛЯ ПИТОНА (Unhardened PK Hex): %c${unhardened_wallet_pk_hex}`, "color: #10B981; font-weight: bold; font-size: 11px;")
+      console.log("%c ---------------------------------------------------- ", "color: #52525b;")
+
+      return unhardened_wallet_pk_hex
+    } catch (e) {
+      console.error("Ошибка при расчете ключей аудите регистрации:", e)
+      return null
+    }
+  }, [])
+
   const handleWalletSubmit = (phraseToSave: string) => {
     const cleanPhrase = phraseToSave.trim()
     if (!cleanPhrase || cleanPhrase.startsWith("Ошибка")) return
@@ -65,23 +129,48 @@ export default function AuthPage() {
       // 2. Устанавливаем время экспирации сессии (5 минут)
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
 
-      // 3. Генерируем адрес кошелька на клиенте из чистой мнемоники (внутри изолированной ОЗУ)
-      const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
-      const derivedAddress = await generateChiaAddressFromMnemonic(phraseToEncrypt, isTestnet)
+      // 3. Запускаем аудит — он выведет все 7 строк и вернет unhardened_wallet_pk_hex
+      const unhardened_wallet_pk_hex = logCryptoAudit(phraseToEncrypt)
 
-      // 4. КРИТИЧЕСКИЙ ФИКС: Записываем в Zustand ТОЛЬКО адрес! 
-      // Проверь сигнатуру метода в своем сторе, передаем только derivedAddress (или пустую строку вместо фраз, если стор требует два аргумента: setWalletData(derivedAddress, ""))
+      if (!unhardened_wallet_pk_hex) {
+        throw new Error("Не удалось рассчитать публичный ключ кошелька")
+      }
+
+      // 4. Отправляем этот ПУБЛИЧНЫЙ ключ на наш Next.js бэкенд
+      const response = await fetch("/api/chia/address", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ wallet_pk_hex: unhardened_wallet_pk_hex, index: 0 }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Сервер вернул статус ${response.status} при создании адреса`)
+      }
+
+      const data = await response.json()
+      
+      if (data.status !== "success" || !data.address) {
+        throw new Error(data.message || "Ошибка генерации адреса внутри Python-скрипта")
+      }
+
+      const derivedAddress = data.address
+      console.log(`%c [XCHA AUTH SUCCESS] Кошелек успешно создан. Получен адрес: ${derivedAddress}`, "color: #10B981; font-weight: bold;")
+
+      // 5. Записываем в Zustand ТОЛЬКО правильный адрес
       setWalletData(derivedAddress, "")
 
-      // 5. Жёсткое обнуление всех локальных стейтов с сырыми данными, чтобы очистить оперативку
+      // 6. Жесткое обнуление локальных стейтов
       setPhraseToEncrypt("")
       setSeedPhrase("")
       setGeneratedPhrase("")
 
-      // 6. Переходим на дашборд
+      // 7. Переходим на дашборд
       router.push("/dashboard")
-    } catch (err) {
+    } catch (err: any) {
       console.error("Криптографическая ошибка создания сейфа:", err)
+      alert(`Ошибка при инициализации кошелька: ${err.message || err}`)
     }
   }
 

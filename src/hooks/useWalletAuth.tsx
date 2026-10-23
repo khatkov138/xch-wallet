@@ -11,12 +11,6 @@ const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут сессии
 const CHIA_PORT = 12381
 const CHIA_COIN = 8444
 
-// =========================================================================
-// 🎯 СТРОКА ДЕБАГА: ЕСЛИ ЗАПОЛНЕНА — ПРИНУДИТЕЛЬНО ТЕСТИРУЕМ ЕЁ.
-// ЕСЛИ ПУСТАЯ (""), КОШЕЛЕК БУДЕТ БРАТЬ РЕАЛЬНУЮ ФРАЗУ ЮЗЕРА ИЗ ФОРМЫ.
-// =========================================================================
-const DEBUG_GLOBAL_MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden"
-
 // Локальное in-memory хранилище сессии вкладки для защиты от атак XSS
 let IN_MEMORY_SEED_PHRASE = ""
 
@@ -50,7 +44,7 @@ export function useWalletAuth() {
   const [decryptedPhrase, setDecryptedPhrase] = useState("")
 
   // =========================================================================
-  // АВТОМАТИЧЕСКИЙ КРИПТОГРАФИЧЕСКИЙ АУДИТ В КОНСОЛЬ БРАУЗЕРА
+  // АВТОМАТИЧЕСКИЙ КРИПТОГРАФИЧЕСКИЙ АУДИТ В КОНСОЛЬ БРАУЗЕРА (БЕЗ ХАРДКОДА)
   // =========================================================================
   const logCryptoAudit = useCallback((clearMnemonic: string) => {
     try {
@@ -95,17 +89,17 @@ export function useWalletAuth() {
 
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
-      // Если константа дебага заполнена, берем её. Иначе берем реальный ввод из формы.
-      const activeMnemonic = DEBUG_GLOBAL_MNEMONIC ? DEBUG_GLOBAL_MNEMONIC : clearMnemonic
+      // Никакого хардкода DEBUG_GLOBAL_MNEMONIC, работаем строго по фразе из ПИН-формы
+      const activeMnemonic = clearMnemonic
 
-      // 1. Запускаем аудит в консоль браузера и вытаскиваем Unhardened Public Key
+      // 1. Запускаем аудит в консоль браузера для реальной фразы
       const walletPublicKeyHex = logCryptoAudit(activeMnemonic)
 
       if (!walletPublicKeyHex) {
         throw new Error("Не удалось рассчитать публичный ключ кошелька")
       }
 
-      // 2. Отправляем публичный ключ на твой новый эндпоинт в папке chia/address
+      // 2. Отправляем публичный ключ на твой эндпоинт в папке chia/address
       const response = await fetch("/api/chia/address", {
         method: "POST",
         headers: {
@@ -165,7 +159,7 @@ export function useWalletAuth() {
 
       if (isSessionValid && walletAddress) {
         setScreenLocked(false)
-        setDecryptedPhrase(DEBUG_GLOBAL_MNEMONIC ? DEBUG_GLOBAL_MNEMONIC : IN_MEMORY_SEED_PHRASE)
+        setDecryptedPhrase(IN_MEMORY_SEED_PHRASE)
       } else {
         IN_MEMORY_SEED_PHRASE = ""
         setDecryptedPhrase("")
