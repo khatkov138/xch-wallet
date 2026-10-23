@@ -23,7 +23,18 @@ export function CreateWalletForm({
 }: CreateWalletFormProps) {
 
   const wordsArray = generatedPhrase ? generatedPhrase.split(" ") : []
-  console.log(wordsArray)
+
+  const handleFormSubmit = () => {
+    if (!generatedPhrase) return
+    
+    // Сигнализируем базовые флаги инициализации в localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem("xcha_mnemonic", "true")
+      localStorage.setItem("xcha_is_auth", "true")
+    }
+    
+    onSubmit()
+  }
 
   return (
     <div className="space-y-4 flex flex-col justify-between h-full">
@@ -49,18 +60,16 @@ export function CreateWalletForm({
           </button>
         </div>
 
-        {/* 3 колонки, крупные овалы, текст text-[13px] читается идеально */}
+        {/* 3 колонки, крупные овалы */}
         <div className="grid grid-cols-3 gap-1.5 select-none">
           {wordsArray.map((word, index) => (
             <div
               key={index}
               className="flex items-center gap-1.5 bg-zinc-900/40 border border-zinc-900/60 rounded-full pl-1.5 pr-2 py-1 transition-all hover:bg-zinc-900/80"
             >
-              {/* Компактный матовый кружок-индекс */}
               <span className="text-[9px] font-mono font-bold text-zinc-500 bg-zinc-950/60 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0">
                 {index + 1}
               </span>
-              {/* Шрифт крупный, жирный, но за счет 3-х колонок все влезает на один экран */}
               <span className="text-[13px] font-sans font-bold text-zinc-200 truncate tracking-tight select-all">
                 {word}
               </span>
@@ -71,7 +80,6 @@ export function CreateWalletForm({
 
       {/* ЗОНА ДЕЙСТВИЙ БЕЗОПАСНОСТИ */}
       <div className="space-y-3 print:hidden">
-        {/* Кнопка мгновенной печати / экспорта в PDF */}
         <button
           type="button"
           onClick={() => window.print()}
@@ -81,7 +89,6 @@ export function CreateWalletForm({
           <span>Быстрая печать бумажного сейфа / PDF</span>
         </button>
 
-        {/* Идеально отцентрованный чекбокс — всегда на виду */}
         <label className="flex items-center gap-3 px-1 min-h-[24px] cursor-pointer select-none group w-full">
           <div className="relative shrink-0 flex items-center justify-center">
             <input
@@ -100,9 +107,9 @@ export function CreateWalletForm({
         </label>
       </div>
 
-      {/* Главная кнопка действия — жестко зафиксирована внизу экрана */}
+      {/* Главная кнопка действия */}
       <Button
-        onClick={onSubmit}
+        onClick={handleFormSubmit}
         disabled={!isAgreed}
         className={`w-full font-bold text-sm h-12 rounded-xl transition-all border-none flex items-center justify-center gap-2 print:hidden ${isAgreed
           ? 'bg-white hover:bg-zinc-200 text-black active:scale-[0.98] cursor-pointer'
@@ -113,7 +120,7 @@ export function CreateWalletForm({
         <ArrowRight size={16} className={isAgreed ? "text-[#FF2E93]" : "text-zinc-600"} />
       </Button>
 
-      {/* Вызываем скрытый печатный бланк (поскольку это экран создания, walletAddress оставляем пустой строкой) */}
+      {/* Скрытый печатный бланк бумажного кошелька */}
       <PapperWalletPrintout mnemonic={generatedPhrase} walletAddress="" />
     </div>
   )

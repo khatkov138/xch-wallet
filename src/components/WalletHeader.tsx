@@ -15,9 +15,18 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
   const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
 
   const handleLogOut = () => {
-    localStorage.clear()
-    sessionStorage.clear() // Это сотрет xcha_clear_mnemonic и сессия закроется намертво
+    // ИСПРАВЛЕНИЕ 1: Вместо localStorage.clear() удаляем строго маркеры кошелька,
+    // чтобы случайно не сбросить данные других скриптов на localhost:3000
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem("xcha_mnemonic")
+      localStorage.removeItem("xcha_is_auth")
+    }
+    
+    // ИСПРАВЛЕНИЕ 2: Твой обновленный Zustand экшен lockWallet() 
+    // теперь сам внутри себя безопасно очищает xcha-wallet-session и xcha_session_pin
     lockWallet()
+    
+    // Жесткий редирект на главную страницу авторизации
     window.location.href = "/"
   }
 

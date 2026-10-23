@@ -5,7 +5,6 @@ import { Delete, ShieldLock } from "lucide-react"
 import { decryptMnemonic } from "@/lib/crypto"
 
 interface UnlockPinFormProps {
-  // ФИКС: Изменили имя на onUnlock, чтобы оно идеально стыковалось с вызовом в page.tsx
   onUnlock: (decryptedMnemonic: string) => void
 }
 
@@ -15,7 +14,6 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
   const [isError, setIsError] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
 
-  // Реф для безопасного хранения тайм-аута разблокировки
   const unlockTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const handleNumberClick = useCallback((num: string) => {
@@ -31,13 +29,15 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
   }, [isLocked, isError])
 
   const handleResetWallet = () => {
-    localStorage.removeItem("xcha_mnemonic")
-    localStorage.removeItem("xcha_is_auth")
-    sessionStorage.removeItem("xcha_session_expires")
-    window.location.href = "/"
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem("xcha_mnemonic")
+      localStorage.removeItem("xcha_is_auth")
+      sessionStorage.removeItem("xcha_session_expires")
+      sessionStorage.removeItem("xcha_session_pin")
+      window.location.href = "/"
+    }
   }
 
-  // Нативный перехват физической клавиатуры
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey) return
@@ -56,7 +56,6 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [handleNumberClick, handleDelete])
 
-  // Эффект валидации ПИН-кода при заполнении 4 цифр
   useEffect(() => {
     if (pin.length === 4) {
       setIsLocked(true)
@@ -66,6 +65,11 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
           const encryptedData = localStorage.getItem("xcha_mnemonic") || ""
           // Расшифровываем сид введенным пином
           const decrypted = await decryptMnemonic(encryptedData, pin)
+
+          // ИСПРАВЛЕНИЕ: Кэшируем ПИН в сессию вкладки для прозрачной работы Zustand Persist при F5
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem("xcha_session_pin", pin)
+          }
 
           // Отдаем чистую фразу в глобальный стор через хук useWalletAuth
           onUnlock(decrypted)
@@ -153,7 +157,7 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
           {isLocked && <div className="absolute inset-0 z-50 bg-transparent" />}
         </div>
 
-        {/* Лояльная финтех-фраза сброса */}
+        {/* Кнопка сброса */}
         <button
           type="button"
           onClick={handleResetWallet}

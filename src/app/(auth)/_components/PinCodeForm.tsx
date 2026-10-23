@@ -68,6 +68,14 @@ export function PinCodeForm({ onSuccess }: PinCodeFormProps) {
         } else {
           // Шаг 2: Проверяем совпадение
           if (pin === tempPin) {
+            
+            // ИСПРАВЛЕНИЕ ПО НОВОМУ СТАНДАРТУ БЕЗОПАСНОСТИ:
+            // Жестко фиксируем созданный ПИН в сессии вкладки перед переходом на Дашборд,
+            // чтобы Zustand-стор сразу мог зашифровать им генерируемую мнемонику.
+            if (typeof window !== 'undefined') {
+              sessionStorage.setItem("xcha_session_pin", pin)
+            }
+
             onSuccess(pin) // Успех! Отдаем наверх готовый пин
           } else {
             // Ошибка: пины не совпали
@@ -132,7 +140,7 @@ export function PinCodeForm({ onSuccess }: PinCodeFormProps) {
         ))}
       </div>
 
-      {/* Сенсорная Клавиатура Финтех-уровня с динамическим блюром */}
+      {/* Сенсорная Клавиатура Финтех-уровня */}
       <div className="relative w-full px-2">
         <div className={`grid grid-cols-3 gap-x-6 gap-y-4 w-full transition-all duration-300 ${
           isLocked ? "opacity-30 blur-[2px] pointer-events-none" : "opacity-100 blur-0"
@@ -168,7 +176,7 @@ export function PinCodeForm({ onSuccess }: PinCodeFormProps) {
           </button>
         </div>
 
-        {/* Невидимый, но физический щит на случай микро-таймингов, полностью блокирующий клики */}
+        {/* Невидимый физический щит */}
         {isLocked && <div className="absolute inset-0 z-50 bg-transparent" />}
       </div>
 

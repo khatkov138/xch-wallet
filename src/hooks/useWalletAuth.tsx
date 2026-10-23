@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useCallback, useState } from "react"
+import { useEffect, useCallback } from "react"
 import { useWalletStore } from "@/store/useWalletStore"
 import bip39 from 'bip39'
 import chiaBls from 'chia-bls'
@@ -10,9 +10,6 @@ const { PrivateKey, AugSchemeMPL } = chiaBls
 const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут сессии
 const CHIA_PORT = 12381
 const CHIA_COIN = 8444
-
-// Локальное in-memory хранилище сессии вкладки для защиты от атак XSS
-let IN_MEMORY_SEED_PHRASE = ""
 
 function derivePath(masterSk: any, path: number[]) {
   let currentSk = masterSk
@@ -31,8 +28,10 @@ function derivePathUnhardened(masterSk: any, path: number[]) {
 }
 
 export function useWalletAuth() {
+  // Вытаскиваем все методы и стейты прямо из Zustand (включая decryptedPhrase)
   const {
     walletAddress,
+    decryptedPhrase,
     isScreenLocked,
     isVerifying,
     setWalletData,
@@ -41,10 +40,8 @@ export function useWalletAuth() {
     setScreenLocked
   } = useWalletStore()
 
-  const [decryptedPhrase, setDecryptedPhrase] = useState("")
-
   // =========================================================================
-  // АВТОМАТИЧЕСКИЙ КРИПТОГРАФИЧЕСКИЙ АУДИТ В КОНСОЛЬ БРАУЗЕРА (БЕЗ ХАРДКОДА)
+  // ТВОЙ ОРИГИНАЛЬНЫЙ КРИПТОГРАФИЧЕСКИЙ АУДИТ ДЛЯ КОНСОЛИ
   // =========================================================================
   const logCryptoAudit = useCallback((clearMnemonic: string) => {
     try {
@@ -89,17 +86,14 @@ export function useWalletAuth() {
 
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
-      // Никакого хардкода DEBUG_GLOBAL_MNEMONIC, работаем строго по фразе из ПИН-формы
       const activeMnemonic = clearMnemonic
-
-      // 1. Запускаем аудит в консоль браузера для реальной фразы
       const walletPublicKeyHex = logCryptoAudit(activeMnemonic)
 
       if (!walletPublicKeyHex) {
         throw new Error("Не удалось рассчитать публичный ключ кошелька")
       }
 
-      // 2. Отправляем публичный ключ на твой эндпоинт в папке chia/address
+      // Отправляем публичный ключ на бэкенд Full Node
       const response = await fetch("/api/chia/address", {
         method: "POST",
         headers: {
@@ -115,20 +109,19 @@ export function useWalletAuth() {
       const data = await response.json()
 
       if (data.status !== "success" || !data.address) {
-        throw new Error(data.message || "Ошибка генерации адреса внутри Python-скрипта")
+        throw new Error(data.message || "Ошибка генерации адреса")
       }
 
-      // 3. Получаем НАСТОЯЩИЙ адрес кошелька от Python бэкенда
       const realChiaAddress = data.address
       console.log(`%c [XCHA API SUCCESS] Реальный адрес получен: ${realChiaAddress}`, "color: #10B981; font-weight: bold;")
 
-      // 4. Кэшируем мнемонику исключительно в изолированную область памяти вкладки
-      IN_MEMORY_SEED_PHRASE = activeMnemonic
-      setDecryptedPhrase(activeMnemonic)
+      // Записываем таймстамп окончания сессии активности
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
+      }
 
-      // 5. Записываем сессию и открываем дашборд с настоящим адресом
-      sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
-      setWalletData(realChiaAddress)
+      // ИСПРАВЛЕНИЕ: Передаем адрес И мнемонику в Zustand. Стор сам закинет их в sessionStorage
+      setWalletData(realChiaAddress, activeMnemonic)
       setScreenLocked(false)
 
     } catch (error: any) {
@@ -137,14 +130,11 @@ export function useWalletAuth() {
     }
   }, [setWalletData, setScreenLocked, logCryptoAudit])
 
-  const handleLockWallet = useCallback(() => {
-    IN_MEMORY_SEED_PHRASE = ""
-    setDecryptedPhrase("")
-    lockWallet()
-  }, [lockWallet])
-
+  // Жизненный цикл сессии и проверка авторизации при F5
   useEffect(() => {
     const initAuth = async () => {
+      if (typeof window === 'undefined') return
+
       const isAuth = localStorage.getItem("xcha_is_auth")
       const savedMnemonic = localStorage.getItem("xcha_mnemonic")
 
@@ -157,12 +147,12 @@ export function useWalletAuth() {
       const now = Date.now()
       const isSessionValid = sessionExpires && now < parseInt(sessionExpires, 10)
 
-      if (isSessionValid && walletAddress) {
+      // ИСПРАВЛЕНИЕ ДЛЯ F5: Благодаря Zustand Persist, если сессия валидна и в сторе есть адрес — 
+      // страница обновляется без разлогина, а мнемоника восстанавливается сама!
+      if (isSessionValid && walletAddress && decryptedPhrase) {
         setScreenLocked(false)
-        setDecryptedPhrase(IN_MEMORY_SEED_PHRASE)
       } else {
-        IN_MEMORY_SEED_PHRASE = ""
-        setDecryptedPhrase("")
+        // Если время сессии истекло, жестко стираем стейты через Zustand экшен
         lockWallet()
       }
 
@@ -170,20 +160,20 @@ export function useWalletAuth() {
     }
 
     initAuth()
-  }, [walletAddress, lockWallet, setVerifying, setScreenLocked])
+  }, [walletAddress, decryptedPhrase, lockWallet, setVerifying, setScreenLocked])
 
+  // Эффект автоматического сброса сессии по неактивности пользователя
   useEffect(() => {
     if (isVerifying || isScreenLocked) return
 
     let timeoutId: NodeJS.Timeout
 
     const resetTimer = () => {
+      if (typeof window === 'undefined') return
       clearTimeout(timeoutId)
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       timeoutId = setTimeout(() => {
-        IN_MEMORY_SEED_PHRASE = ""
-        setDecryptedPhrase("")
-        lockWallet()
+        lockWallet() // Автоматически затирает стор Zustand при простое
       }, INACTIVITY_TIMEOUT)
     }
 
@@ -200,10 +190,10 @@ export function useWalletAuth() {
 
   return {
     walletAddress,
-    decryptedPhrase,
+    decryptedPhrase, // Наша BackupCard подхватит чистую строку отсюда
     isVerifying,
     isScreenLocked,
     handleUnlockSuccess,
-    lockWallet: handleLockWallet
+    lockWallet
   }
 }
