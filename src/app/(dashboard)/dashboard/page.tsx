@@ -10,17 +10,20 @@ import { ActivityList } from "./_components/ActivityList"
 import { BackupCard } from "./_components/BackupCard"
 import { UnlockPinForm } from "./_components/UnlockPinForm"
 import { ReceiveModal } from "./_components/ReceiveModal"
+import { SendModal } from "./_components/SendModal" // <-- Импорт новой модалки отправки
 import { WalletLayout } from "@/components/WalletLayout"
 
 export default function DashboardPage() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
+  const [isSendOpen, setIsSendOpen] = useState(false) // <-- Стейт для управления модалкой отправки
 
   const {
     walletAddress,
     decryptedPhrase,
     isVerifying,
     isScreenLocked,
-    handleUnlockSuccess
+    handleUnlockSuccess,
+    signMessage // <-- Вытаскиваем готовый метод подписания и верификации
   } = useWalletAuth()
 
   if (isVerifying) {
@@ -51,20 +54,33 @@ export default function DashboardPage() {
 
       <WalletLayout variant="dashboard">
         <div className="w-full space-y-6">
-          {<BalanceSection currentAddress={walletAddress} />}
+          <BalanceSection currentAddress={walletAddress} />
           <AddressCard address={walletAddress} />
-          <ActionButtons onReceiveClick={() => setIsReceiveOpen(true)} />
-          {<ActivityList currentAddress={walletAddress} />}
 
+          {/* Передаем оба триггера в кнопки управления */}
+          <ActionButtons
+            onReceiveClick={() => setIsReceiveOpen(true)}
+            onSendClick={() => setIsSendOpen(true)}
+          />
+
+          <ActivityList currentAddress={walletAddress} />
           <BackupCard walletAddress={walletAddress} />
-
         </div>
       </WalletLayout>
 
+      {/* Модальное окно получения средств */}
       <ReceiveModal
         isOpen={isReceiveOpen}
         onClose={() => setIsReceiveOpen(false)}
         walletAddress={walletAddress}
+      />
+
+      {/* Модальное окно отправки средств с пропсом криптографической подписи */}
+      <SendModal
+        isOpen={isSendOpen}
+        onClose={() => setIsSendOpen(false)}
+       
+        signMessage={signMessage}
       />
     </div>
   )
