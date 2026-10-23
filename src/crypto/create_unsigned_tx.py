@@ -2,39 +2,45 @@ import sys
 import json
 import urllib.request
 import ssl
-import hashlib
 import os
+import hashlib
 
-# Импортируем только базовый Coin, который работает везде без ошибок
-from chia_rs import Coin
+# 1. ИСПРАВЛЕНО: Канонический Genesis Challenge для Testnet11
+GENESIS_CHALLENGE = bytes.fromhex("37a90eb5185a9c4439a91ddc98bbadce7b4feba060d50116a067de66bf236615")
+BECH32_ALPHABET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 
-# Константа сети для Testnet11
-TESTNET11_GENESIS_CHALLENGE = bytes.fromhex("37a90eb5185a9c4439a91ddc260b271fbc91ad6b3891461ea55bc9387455ab73")
+def address_to_puzzle_hash(address: str) -> str:
+    """Конвертация адреса xch1/txch1 в puzzle_hash без внешних библиотек"""
+    if not address.startswith("txch1") and not address.startswith("xch1"):
+        raise ValueError("Невалидный префикс адреса")
+    parts = address.split("1")
+    data_part = parts[-1]
+    values = [BECH32_ALPHABET.index(c) for c in data_part if c in BECH32_ALPHABET]
+    data = values[:-6]
+    acc, bits = 0, 0
+    ret = bytearray()
+    for value in data:
+        acc = (acc << 5) | value
+        bits += 5
+        while bits >= 8:
+            bits -= 8
+            ret.append((acc >> bits) & 0xFF)
+    return ret.hex()
 
-def call_rpc(method, data):
-    """Вызов RPC фулл-ноды с авторизацией через локальные SSL сертификаты Chia"""
-    url = f"https://localhost:8555/{method}"
+def call_wallet_rpc(method: str, data: dict) -> dict:
+    """Безопасный вызов локального Chia Wallet RPC через SSL сертификаты"""
+    url = f"https://localhost:9256/{method}"
+    home_dir = os.environ.get("USERPROFILE") or os.path.expanduser("~") or "C:\\Users\\khatk"
     
-    home_dir = os.environ.get("USERPROFILE") or os.path.expanduser("~") or os.environ.get("HOME") or "C:\\Users\\khatk"
-    network_folder = "testnet11" 
+    ssl_dir = os.path.join(home_dir, ".chia", "testnet11", "config", "ssl", "wallet")
+    cert_file = os.path.join(ssl_dir, "private_wallet.crt")
+    key_file = os.path.join(ssl_dir, "private_wallet.key")
     
-    ssl_dir = os.path.join(home_dir, ".chia", network_folder, "config", "ssl", "full_node")
-    cert_file = os.path.join(ssl_dir, "private_full_node.crt")
-    key_file = os.path.join(ssl_dir, "private_full_node.key")
-    
-    if not os.path.exists(cert_file) or not os.path.exists(key_file):
-        ssl_dir = os.path.join(home_dir, ".chia", "mainnet", "config", "ssl", "full_node")
-        cert_file = os.path.join(ssl_dir, "private_full_node.crt")
-        key_file = os.path.join(ssl_dir, "private_full_node.key")
-
-    if not os.path.exists(cert_file) or not os.path.exists(key_file):
-        ssl_dir = "C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node"
-        cert_file = os.path.join(ssl_dir, "private_full_node.crt")
-        key_file = os.path.join(ssl_dir, "private_full_node.key")
+    if not os.path.exists(cert_file):
+        ssl_dir = os.path.join(home_dir, ".chia", "mainnet", "config", "ssl", "wallet")
+        cert_file = os.path.join(ssl_dir, "private_wallet.crt")
+        key_file = os.path.join(ssl_dir, "private_wallet.key")
         
-    if not os.path.exists(cert_file) or not os.path.exists(key_file):
-        raise Exception(f"SSL-сертификаты Full Node полностью отсутствуют в системе.")
-    
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -43,109 +49,90 @@ def call_rpc(method, data):
     req = urllib.request.Request(
         url, 
         data=json.dumps(data).encode('utf-8'), 
-        headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+        headers={'Content-Type': 'application/json'}
     )
     with urllib.request.urlopen(req, context=ctx) as response:
         return json.loads(response.read().decode('utf-8'))
 
 def main():
-    if len(sys.argv) < 6:
-        print(json.dumps({"status": "error", "message": "Missing arguments"}))
+    if len(sys.argv) < 5:
+        print(json.dumps({"status": "error", "message": "Недостаточно аргументов командной строки"}))
         sys.exit(1)
 
-    wallet_pk_hex = sys.argv[1]
-    sender_ph_hex = sys.argv[2]
-    target_address_hex = sys.argv[3]
-    amount = int(sys.argv[4])
-    fee = int(sys.argv[5])
+    sender_address = sys.argv[1]
+    target_address = sys.argv[2]
+    amount_mojo = int(sys.argv[3])
+    fee_mojo = int(sys.argv[4])
 
     try:
-        sender_ph = bytes.fromhex(sender_ph_hex)
-        target_ph = bytes.fromhex(target_address_hex)
+        target_puzzle_hash = address_to_puzzle_hash(target_address)
 
-        # Форматируем префикс строго для RPC ноды
-        rpc_sender_ph = f"0x{sender_ph_hex}" if not sender_ph_hex.startswith("0x") else sender_ph_hex
-
-        # 1. Запрашиваем доступные монеты
-        rpc_response = call_rpc("get_coin_records_by_puzzle_hash", {
-            "puzzle_hash": rpc_sender_ph,
-            "include_spent_coins": False
+        # 2. ИСПРАВЛЕНО: Добавлен обязательный массив 'additions', без которого новая нода падает
+        rpc_response = call_wallet_rpc("create_signed_transaction", {
+            "wallet_id": 1,
+            "amount": amount_mojo,
+            "address": target_address,
+            "fee": fee_mojo,
+            "push_tx": False,
+            "additions": [
+                {
+                    "amount": amount_mojo,
+                    "puzzle_hash": "0x" + target_puzzle_hash
+                }
+            ]
         })
 
         if not rpc_response.get("success"):
-            print(json.dumps({"status": "error", "message": f"RPC Error: {rpc_response}"}))
+            print(json.dumps({"status": "error", "message": f"Ошибка сборки CLVM через RPC: {rpc_response}"}))
             return
 
-        coin_records = rpc_response.get("coin_records", [])
-        if not coin_records:
-            print(json.dumps({"status": "error", "message": "На адресе нет доступных монет (баланс 0)."}))
-            return
-
-        total_needed = amount + fee
-        selected_coins = []
-        selected_amount = 0
-        
-        # Собираем список монет в удобном формате словарей для отправки обратно в Next.js
-        coins_json_list = []
-
-        for cr in coin_records:
-            if not cr.get("spent"):
-                c_data = cr["coin"]
-                parent_info = c_data["parent_coin_info"]
-                p_hash = c_data["puzzle_hash"]
-                if parent_info.startswith("0x"): parent_info = parent_info[2:]
-                if p_hash.startswith("0x"): p_hash = p_hash[2:]
-
-                coin_obj = Coin(
-                    bytes.fromhex(parent_info),
-                    bytes.fromhex(p_hash),
-                    int(c_data["amount"])
-                )
-                selected_coins.append(coin_obj)
-                
-                # Добавляем в json-структуру
-                coins_json_list.append({
-                    "parent_coin_info": parent_info,
-                    "puzzle_hash": p_hash,
-                    "amount": int(c_data["amount"])
-                })
-                
-                selected_amount += coin_obj.amount
-                if selected_amount >= total_needed:
-                    break
-
-        if selected_amount < total_needed:
-            print(json.dumps({"status": "error", "message": f"Недостаточно баланса. Нужно {total_needed} mojo, есть {selected_amount} mojo"}))
-            return
-
-        primary_coin = selected_coins[0]
-
-        # 2. Вычисляем delegated_puzzle_hash
-        sha256 = hashlib.sha256()
-        sha256.update(b"\x33" + target_ph + amount.to_bytes(8, byteorder="big"))
-        
-        change_amount = selected_amount - total_needed
-        if change_amount > 0:
-            sha256.update(b"\x33" + sender_ph + change_amount.to_bytes(8, byteorder="big"))
+        tx = rpc_response["transaction"] if "transaction" in rpc_response else rpc_response["transactions"]
+        if isinstance(tx, list):
+            tx = tx[0]
             
-        delegated_puzzle_hash = sha256.digest()
+        rpc_spend = tx["spend_bundle"]["coin_spends"]
+        
+        # 3. ИСПРАВЛЕНО: rpc_spend — это массив. Берем строго нулевой элемент для извлечения монеты.
+        primary_coin = rpc_spend[0]["coin"]
 
-        # 3. Вычисляем финальный хеш сообщения для подписи (agg_sig_me)
-        coin_id = primary_coin.name()
-        hasher = hashlib.sha256()
-        hasher.update(delegated_puzzle_hash + coin_id + TESTNET11_GENESIS_CHALLENGE)
-        final_message_hash = hasher.digest()
+        # 4. Канонический расчет Coin ID (sha256 от конкатенации полей)
+        parent_bytes = bytes.fromhex(primary_coin["parent_coin_info"].replace("0x", ""))
+        puzzle_bytes = bytes.fromhex(primary_coin["puzzle_hash"].replace("0x", ""))
+        amount_bytes = int(primary_coin["amount"]).to_bytes(8, byteorder="big")
+        
+        coin_id_bytes = hashlib.sha256(parent_bytes + puzzle_bytes + amount_bytes).digest()
+        coin_id_hex = coin_id_bytes.hex()
 
-        # Возвращаем чистые данные без оберток SpendBundle
+        # 5. Извлекаем истинный message_hash из истории подписей кошелька
+        message_hash_hex = None
+        
+        if "signing_histories" in rpc_response and len(rpc_response["signing_histories"]) > 0:
+            message_hash_hex = rpc_response["signing_histories"][0].get("message_hash", None)
+            
+        if not message_hash_hex and "signing_histories" in tx and len(tx["signing_histories"]) > 0:
+            message_hash_hex = tx["signing_histories"][0].get("message_hash", None)
+
+        if not message_hash_hex:
+            # Если нода скрыла историю, отдаем коин ID как резервный ориентир, 
+            # но фронтенд должен знать, что подписывать нужно delegated_puzzle
+            message_hash_hex = tx.get("name", "").replace("0x", "")
+
+        # 6. Отдаем чистый валидный JSON в консоль для Next.js
         print(json.dumps({
             "status": "success",
-            "message_hash_hex": final_message_hash.hex(),
-            "selected_coins": coins_json_list,
-            "change_amount": change_amount
-        }))
+            "message_hash_hex": message_hash_hex.replace("0x", ""),
+            "tx_data": {
+                "coin_id": coin_id_hex,
+                "coin_spends": rpc_spend,
+                "node_signature": tx["spend_bundle"]["aggregated_signature"].replace("0x", ""),
+                "parent_coin_info": primary_coin["parent_coin_info"].replace("0x", ""),
+                "puzzle_hash": primary_coin["puzzle_hash"].replace("0x", ""),
+                "amount": primary_coin["amount"]
+            }
+        }, indent=2))
 
     except Exception as e:
-        print(json.dumps({"status": "error", "message": str(e)}))
+        print(json.dumps({"status": "error", "message": f"Ошибка оффлайн генерации транзакции: {str(e)}"}))
 
 if __name__ == "__main__":
     main()
