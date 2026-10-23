@@ -3,80 +3,119 @@ import fs from "fs"
 import path from "path"
 import https from "https"
 import os from "os"
+import { bech32m } from "bech32"
 import { createApiResponse } from "@/lib/server-utils"
 
-// Отключаем панику Node.js из-за самоподписанных SSL-сертификатов локальной ноды Chia
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-// 1. Интерфейс сырого ответа транзакции от легкого кошелька Chia RPC
-interface ChiaRpcTransaction {
-  to_address: string;
-  amount: number;
-  created_at_time: number; // Реальное поле времени легкого кошелька
-  type: number;            // 0 = входящая транзакция в экосистеме Chia
-  name: string;
-  confirmed: boolean;
+interface ChiaCoinRecord {
+  amount: number | string;
+  spent_block_index?: number;     
+  confirmed_block_index?: number; 
+  spent_height?: number;          
+  confirmed_height?: number;       
+  spent: boolean;
+  id?: string; // Поле id в Chia RPC часто отсутствует в сырых ответах
+  coin: {
+    amount: number | string;
+    parent_coin_info: string;
+    puzzle_hash: string;
+  };
   [key: string]: unknown;
 }
 
-interface ChiaRpcTxSuccess { success: true; transactions: ChiaRpcTransaction[]; }
-interface ChiaRpcTxError { success: false; error: string; }
-type ChiaRpcTxResult = ChiaRpcTxSuccess | ChiaRpcTxError;
+interface ChiaRpcFullNodeResult {
+  success: boolean;
+  coin_records?: ChiaCoinRecord[];
+  error?: string;
+}
 
-// 2. Чистый тип данных, который мы отдаем на фронтенд (без лишнего мусора ноды)
 interface CleanTransaction {
   name: string;
   to_address: string;
-  amount: number;
-  confirmed_at_time: number;
-  type: number;
+  amount: string; 
+  confirmed_at_time: number; 
+  type: number; 
+}
+
+const MOJO_PER_XCH = 1000000000000n;
+
+function formatMojoToXch(mojo: bigint): string {
+  const mojoStr = mojo.toString();
+  if (mojo === 0n) return "0";
+  
+  if (mojo < MOJO_PER_XCH) {
+    const padded = mojoStr.padStart(12, "0");
+    return `0.${padded}`.replace(/\.?0+$/, "");
+  }
+  
+  const integerPart = mojoStr.slice(0, -12);
+  const fractionalPart = mojoStr.slice(-12).replace(/0+$/, "");
+  
+  return fractionalPart.length > 0 ? `${integerPart}.${fractionalPart}` : integerPart;
+}
+
+function safeAddressToPuzzleHash(address: string): string {
+  const decoded = bech32m.decode(address);
+  const words = bech32m.fromWords(decoded.words);
+  return Buffer.from(words).toString("hex");
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url)
   const address = searchParams.get("address")
 
-  console.log(`\n[CHIA TX] === СТАРТ ЗАПРОСА ИСТОРИИ ТРАНЗАКЦИЙ ===`)
-  console.log(`[CHIA TX] Получен адрес из браузера для фильтрации: "${address}"`)
+  console.log(`\n[CHIA FULL NODE TX] ==========================================`)
+  console.log(`[CHIA FULL NODE TX] [START] Запрос истории через FULL NODE (Порт 8555)`)
 
   if (!address || (!address.startsWith("xch1") && !address.startsWith("txch1"))) {
-    console.log(`[CHIA TX] ОШИБКА: Неверный формат адреса`)
     return NextResponse.json({
       success: false,
       data: null,
-      error: "Valid Chia address (Mainnet or Testnet) is required"
+      error: "Valid Chia address is required"
     }, { status: 400 })
   }
 
-  // Передаем <CleanTransaction[]> в дженерик, чтобы зафиксировать форму ответа
   return createApiResponse<CleanTransaction[]>(async () => {
-    const homeDir = os.homedir()
     const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
     const networkFolder = isTestnet ? "testnet11" : "mainnet"
-    const sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "wallet")
-
-    const certPath = path.join(sslPath, "private_wallet.crt")
-    const keyPath = path.join(sslPath, "private_wallet.key")
+    const homeDir = process.env.USERPROFILE || os.homedir() || process.env.HOME || "C:\\Users\\khatk";
+    
+    let sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "full_node")
+    let certPath = path.join(sslPath, "private_full_node.crt")
+    let keyPath = path.join(sslPath, "private_full_node.key")
 
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      throw new Error(`SSL-сертификаты отсутствуют по пути: ${sslPath}`)
+      sslPath = path.join(homeDir, ".chia", "mainnet", "config", "ssl", "full_node")
+      certPath = path.join(sslPath, "private_full_node.crt")
+      keyPath = path.join(sslPath, "private_full_node.key")
+    }
+
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      sslPath = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node`
+      certPath = path.join(sslPath, "private_full_node.crt")
+      keyPath = path.join(sslPath, "private_full_node.key")
+    }
+
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      throw new Error(`SSL-сертификаты Full Node полностью отсутствуют в системе.`)
     }
 
     const cert = fs.readFileSync(certPath)
     const key = fs.readFileSync(keyPath)
     const agent = new https.Agent({ cert, key, rejectUnauthorized: false })
 
-    // payload без конфликтного ключа sort_key, вызывавшего ошибку "no known sort"
+    let pHash = safeAddressToPuzzleHash(address)
+    if (!pHash.startsWith("0x")) pHash = "0x" + pHash
+
     const rpcPayload = JSON.stringify({
-      wallet_id: 1,
-      start: 0,
-      end: 50,
-      reverse: true
+      puzzle_hash: pHash,
+      include_spent_coins: true 
     })
 
-    const nodeResponseData = await new Promise<ChiaRpcTxResult>((resolve, reject) => {
+    const nodeResponseData = await new Promise<ChiaRpcFullNodeResult>((resolve, reject) => {
       const req = https.request(
-        "https://localhost:9256/get_transactions",
+        "https://localhost:8555/get_coin_records_by_puzzle_hash",
         {
           method: "POST",
           headers: {
@@ -85,21 +124,21 @@ export async function GET(request: Request): Promise<NextResponse> {
             "Content-Length": Buffer.byteLength(rpcPayload, "utf8")
           },
           agent: agent,
-          timeout: 5000
+          timeout: 15000
         },
         (res) => {
-          let chunks = ""
-          res.on("data", (chunk: string) => { chunks += chunk })
+          const chunks: Buffer[] = []
+          res.on("data", (chunk: Buffer) => { chunks.push(chunk) })
           res.on("end", () => {
             try {
-              resolve(JSON.parse(chunks) as ChiaRpcTxResult)
+              const completeBuffer = Buffer.concat(chunks)
+              resolve(JSON.parse(completeBuffer.toString("utf8")) as ChiaRpcFullNodeResult)
             } catch {
-              reject(new Error(`Критическая ошибка парсинга JSON ответа ноды`))
+              reject(new Error(`Ошибка парсинга JSON ответа Full Node`))
             }
           })
         }
       )
-
       req.on("timeout", () => { req.destroy(); reject(new Error("Timeout")) })
       req.on("error", (err: Error) => reject(err))
       req.write(rpcPayload, "utf8")
@@ -107,35 +146,66 @@ export async function GET(request: Request): Promise<NextResponse> {
     })
 
     if (!nodeResponseData.success) {
-      throw new Error(nodeResponseData.error || "RPC Error")
+      throw new Error(nodeResponseData.error || "Full Node RPC Error")
     }
 
-    const rawTransactions = nodeResponseData.transactions || []
-    console.log(`[CHIA TX] Всего получено записей из RPC кошелька: ${rawTransactions.length}`)
+    const coinRecords = nodeResponseData.coin_records || []
+    
+    let maxKnownHeight = 0
+    for (const r of coinRecords) {
+      const h = r.spent_block_index || r.confirmed_block_index || r.spent_height || r.confirmed_height || 0
+      if (h > maxKnownHeight) maxKnownHeight = h
+    }
 
-    // Адаптируем данные под структуру фронтенда и правила ActivityList
-    const filteredTx: CleanTransaction[] = rawTransactions
-      .filter((tx: ChiaRpcTransaction) => {
-        // Проверяем, что транзакция подтверждена и имеет метку времени легкого кошелька
-        return tx && tx.confirmed && tx.created_at_time > 0
-      })
-      .map((tx: ChiaRpcTransaction) => {
-        // Конвертируем тип: у кошелька Chia входящий платеж — это type: 0.
-        // Превращаем его в 1, чтобы фронтенд зажег зеленую стрелочку получения.
-        const frontendType = tx.type === 0 ? 1 : 2
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    const SECONDS_PER_BLOCK = 18.75 
 
-        return {
-          name: tx.name,
-          to_address: tx.to_address,
-          amount: tx.amount,
-          confirmed_at_time: tx.created_at_time, // Передаем таймстамп из корректного поля
-          type: frontendType
+    const finalHistory: CleanTransaction[] = [];
+
+    for (const record of coinRecords) {
+      if (!record.coin) continue;
+
+      const amountMojo = BigInt(record.coin.amount);
+      const amountXch = formatMojoToXch(amountMojo);
+
+      // ИСПРАВЛЕНИЕ: Если нода не вернула record.id, собираем железный уникальный ID из свойств монеты
+      const fallbackCoinId = record.id || `${record.coin.parent_coin_info.slice(0, 10)}_${record.coin.amount}`;
+
+      // 1. Монета была создана (входящая)
+      const cHeight = record.confirmed_block_index ?? record.confirmed_height ?? 0;
+      let cTimestamp = nowSeconds;
+      if (maxKnownHeight > 0 && cHeight > 0) {
+        cTimestamp = nowSeconds - Math.floor((maxKnownHeight - cHeight) * SECONDS_PER_BLOCK);
+      }
+
+      finalHistory.push({
+        name: fallbackCoinId,
+        to_address: address,
+        amount: amountXch,
+        confirmed_at_time: cTimestamp,
+        type: 1 
+      });
+
+      // 2. Монета была потрачена (исходящая)
+      if (record.spent) {
+        const sHeight = record.spent_block_index ?? record.spent_height ?? 0;
+        let sTimestamp = nowSeconds;
+        if (maxKnownHeight > 0 && sHeight > 0) {
+          sTimestamp = nowSeconds - Math.floor((maxKnownHeight - sHeight) * SECONDS_PER_BLOCK);
         }
-      })
 
-    console.log(`[CHIA TX] УСПЕХ -> Транзакций отдано для фронтенда: ${filteredTx.length}`)
-    console.log(`[CHIA TX] === КОНЕЦ УСПЕШНОГО ЗАПРОСА ===\n`)
+        finalHistory.push({
+          name: fallbackCoinId,
+          to_address: address,
+          amount: amountXch,
+          confirmed_at_time: sTimestamp,
+          type: 2 
+        });
+      }
+    }
 
-    return filteredTx
+    finalHistory.sort((a, b) => b.confirmed_at_time - a.confirmed_at_time)
+    console.log(`[CHIA FULL NODE TX] УСПЕХ -> Отдано транзакций на фронтенд: ${finalHistory.length}`)
+    return finalHistory
   })
 }

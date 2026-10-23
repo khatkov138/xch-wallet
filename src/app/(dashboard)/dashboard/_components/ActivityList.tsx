@@ -6,7 +6,6 @@ import { Card, CardContent } from "@/components/ui/card"
 import { useQuery } from "@tanstack/react-query"
 import { handleApi } from "@/lib/utils"
 import { CleanTransaction, formatAddress, formatDate } from "@/app/types/chia"
-// Импортируем всё из единого центра типов
 
 interface ActivityListProps {
   currentAddress: string;
@@ -35,13 +34,17 @@ export function ActivityList({ currentAddress }: ActivityListProps) {
               История транзакций пуста
             </div>
           ) : (
-            transactions.map((tx) => {
+            transactions.map((tx, index) => {
               const isIncoming = tx.type === 1
-              const formattedAmount = (tx.amount / 1_000_000_000_000).toFixed(4)
+              const formattedAmount = tx.amount
+
+              // ЖЕЛЕЗОБЕТОННЫЙ КЛЮЧ: имя + тип + индекс + время. 
+              // React никогда больше не выдаст ошибку неуникального ключа.
+              const uniqueKey = `${tx.name || 'tx'}_${tx.type}_${index}_${tx.confirmed_at_time}`;
 
               return (
                 <div
-                  key={tx.name}
+                  key={uniqueKey}
                   className="flex items-center justify-between p-2.5 hover:bg-zinc-900/40 rounded-xl transition-colors"
                 >
                   <div className="flex items-center gap-3">
