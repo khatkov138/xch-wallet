@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react"
 import { Delete, ShieldLock } from "lucide-react"
 import { decryptMnemonic } from "@/lib/crypto"
 
+
 interface UnlockPinFormProps {
   onUnlock: (decryptedMnemonic: string) => void
 }
@@ -115,10 +116,10 @@ export function UnlockPinForm({ onUnlock }: UnlockPinFormProps) {
             <div
               key={i}
               className={`h-3.5 w-3.5 rounded-full border-2 transition-all duration-150 ${isError
-                  ? "bg-red-500 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
-                  : i < pin.length
-                    ? "bg-[#FF2E93] border-[#FF2E93] shadow-[0_0_10px_rgba(255,46,147,0.5)] scale-110"
-                    : "border-zinc-800 bg-transparent"
+                ? "bg-red-500 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                : i < pin.length
+                  ? "bg-[#FF2E93] border-[#FF2E93] shadow-[0_0_10px_rgba(255,46,147,0.5)] scale-110"
+                  : "border-zinc-800 bg-transparent"
                 }`}
             />
           ))}

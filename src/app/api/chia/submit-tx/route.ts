@@ -4,7 +4,11 @@ import path from "path"
 
 export async function POST(req: NextRequest) {
   try {
-    const { tx_data, signature } = await req.json()
+    const { 
+      tx_data, 
+      signature,
+      network = "testnet11" // ДОБАВЛЕНО: Явно прокидываем сеть, чтобы submit_tx.py читал правильные SSL сертификаты
+    } = await req.json()
 
     if (!tx_data || !signature) {
       return NextResponse.json(
@@ -13,7 +17,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const scriptPath = path.resolve(process.cwd(), "src/crypto/push_signed_tx.py")
+    const scriptPath = path.resolve(process.cwd(), "src/crypto/submit_tx.py")
 
     const runPython = (): Promise<any> => {
       return new Promise((resolve, reject) => {
@@ -36,7 +40,8 @@ export async function POST(req: NextRequest) {
         })
 
         // Безопасно упаковываем данные в один JSON и пихаем в поток ввода питона
-        const payload = JSON.stringify({ tx_data, signature })
+        // ИСПРАВЛЕНО: Добавлен network в payload для stdin
+        const payload = JSON.stringify({ tx_data, signature, network })
         child.stdin?.write(payload)
         child.stdin?.end()
       })

@@ -5,32 +5,32 @@ import path from "path"
 export async function POST(req: NextRequest) {
   try {
     const { 
-      unhardened_pk,    // ИСПРАВЛЕНО: Принимаем публичный ключ вместо адреса отправителя
+      unhardened_sk,    // Локально деривированный приватный ключ кошелька
       target_address,   // Адрес получателя, куда отправляем
       amount_mojo,      // Сумма в mojo
-      fee_mojo 
+      fee_mojo,
+      network = "testnet11"
     } = await req.json()
 
-    // ИСПРАВЛЕНО: Проверяем unhardened_pk вместо адреса
-    if (!unhardened_pk || !target_address || !amount_mojo) {
+    if (!unhardened_sk || !target_address || !amount_mojo) {
       return NextResponse.json(
-        { status: "error", message: "Не все обязательные параметры переданы (unhardened_pk, target_address, amount_mojo)" },
+        { status: "error", message: "Не все обязательные параметры переданы (unhardened_sk, target_address, amount_mojo)" },
         { status: 400 }
       )
     }
 
-    const scriptPath = path.resolve(process.cwd(), "src/crypto/create_unsigned_tx.py")
+    const scriptPath = path.resolve(process.cwd(), "src/crypto/build_tx.py")
 
     const runPython = (): Promise<any> => {
       return new Promise((resolve, reject) => {
         const pythonExecutable = process.platform === "win32" ? "py" : "python3"
         
-        // ИСПРАВЛЕНО: Передаем питону unhardened_pk первым аргументом вместо sender_address
+        // БЕЗОПАСНО: В аргументы передаем ТОЛЬКО флаги и путь к скрипту. Ключи не светятся в процессах ОС!
         const args = process.platform === "win32" 
-          ? ["-3.11", scriptPath, unhardened_pk, target_address, String(amount_mojo), String(fee_mojo || 0)] 
-          : [scriptPath, unhardened_pk, target_address, String(amount_mojo), String(fee_mojo || 0)]
+          ? ["-3.11", scriptPath] 
+          : [scriptPath]
 
-        execFile(pythonExecutable, args, (error, stdout, stderr) => {
+        const child = execFile(pythonExecutable, args, (error, stdout, stderr) => {
           if (error) {
             reject(new Error(`Ошибка сборки транзакции: ${error.message}. Stderr: ${stderr}`))
             return
@@ -43,6 +43,18 @@ export async function POST(req: NextRequest) {
             reject(new Error(`Питон вернул не JSON. Данные: ${stdout}`))
           }
         })
+
+        // ИСПРАВЛЕНО: Безопасно пишем все данные, включая приватный ключ, напрямую в поток stdin питона
+        const payload = JSON.stringify({
+          unhardened_sk,
+          target_address,
+          amount_mojo,
+          fee_mojo: fee_mojo || 0,
+          network
+        })
+
+        child.stdin?.write(payload)
+        child.stdin?.end()
       })
     }
 
