@@ -21,7 +21,7 @@ export function WalletLayout({ children, variant, version }: WalletLayoutProps) 
 
   const { data: nodeData, isError, isLoading } = useQuery<NodeShortStatus>({
     queryKey: ['chiaNodeStatus'],
-    queryFn: () => handleApi<NodeShortStatus>(fetch("/api/chia/rpc/node-status")),
+    queryFn: () => handleApi<NodeShortStatus>(fetch("/api/rpc/node-status")),
 
     refetchInterval: 15000,
     staleTime: 5000,

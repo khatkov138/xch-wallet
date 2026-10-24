@@ -5,16 +5,16 @@ import path from "path"
 export async function POST(req: NextRequest) {
   try {
     const { 
-      sender_address,   // Адрес отправителя (твоего кошелька), берем из Zustand стора
+      unhardened_pk,    // ИСПРАВЛЕНО: Принимаем публичный ключ вместо адреса отправителя
       target_address,   // Адрес получателя, куда отправляем
       amount_mojo,      // Сумма в mojo
       fee_mojo 
     } = await req.json()
 
-    // Проверяем только критичные данные, которые вводит пользователь
-    if (!sender_address || !target_address || !amount_mojo) {
+    // ИСПРАВЛЕНО: Проверяем unhardened_pk вместо адреса
+    if (!unhardened_pk || !target_address || !amount_mojo) {
       return NextResponse.json(
-        { status: "error", message: "Не все обязательные параметры переданы (sender_address, target_address, amount_mojo)" },
+        { status: "error", message: "Не все обязательные параметры переданы (unhardened_pk, target_address, amount_mojo)" },
         { status: 400 }
       )
     }
@@ -25,11 +25,10 @@ export async function POST(req: NextRequest) {
       return new Promise((resolve, reject) => {
         const pythonExecutable = process.platform === "win32" ? "py" : "python3"
         
-        // Передаем питону только чистые адреса и суммы. 
-        // Питон сам по адресу найдет монеты в блокчейне и рассчитает puzzle_hash!
+        // ИСПРАВЛЕНО: Передаем питону unhardened_pk первым аргументом вместо sender_address
         const args = process.platform === "win32" 
-          ? ["-3.11", scriptPath, sender_address, target_address, String(amount_mojo), String(fee_mojo || 0)] 
-          : [scriptPath, sender_address, target_address, String(amount_mojo), String(fee_mojo || 0)]
+          ? ["-3.11", scriptPath, unhardened_pk, target_address, String(amount_mojo), String(fee_mojo || 0)] 
+          : [scriptPath, unhardened_pk, target_address, String(amount_mojo), String(fee_mojo || 0)]
 
         execFile(pythonExecutable, args, (error, stdout, stderr) => {
           if (error) {

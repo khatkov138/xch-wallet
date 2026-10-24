@@ -4,15 +4,18 @@ import React, { useState } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWalletStore } from "@/store/useWalletStore"
+import { useWalletAuth } from "@/hooks/useWalletAuth" // Импортируем ваш хук
 
 interface SendModalProps {
   isOpen: boolean
   onClose: () => void
-  signMessage: (messageHashHex: string) => string | null
 }
 
-export function SendModal({ isOpen, onClose, signMessage }: SendModalProps) {
-  const { walletAddress } = useWalletStore() 
+export function SendModal({ isOpen, onClose }: SendModalProps) {
+  const { walletAddress } = useWalletStore()
+
+  // Забираем каноничную подпись и оффлайн-генератор паблика прямо из хука сессии
+  const { signMessage, getUnhardenedPkHex } = useWalletAuth()
 
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
@@ -35,7 +38,7 @@ export function SendModal({ isOpen, onClose, signMessage }: SendModalProps) {
     if (!targetAddress || !amount) return
 
     const targetFeeMojo = parseInt(customFeeMojo) || 0
-    
+
     if (targetFeeMojo > 0 && targetFeeMojo < 5000000) {
       setStatusMessage("❌ Ошибка: Укажите комиссию 0 или не менее 5 000 000 Mojo!")
       return
@@ -45,15 +48,21 @@ export function SendModal({ isOpen, onClose, signMessage }: SendModalProps) {
     setStatusMessage("1/3 Сборка транзакции на бэкенде...")
 
     try {
-      // 1. Запрос к бэкенду. Передаем РЕАЛЬНУЮ ручную комиссию
+      // Генерируем Unhardened Wallet PK Hex из оперативной памяти хука
+      const computedPkHex = getUnhardenedPkHex()
+      if (!computedPkHex) {
+        throw new Error("Не удалось рассчитать публичный ключ. Сессия заблокирована.")
+      }
+
+      // 1. Запрос к бэкенду. Передаем РЕАЛЬНУЮ ручную комиссию и некастодиальный PK
       const buildResponse = await fetch("/api/chia/build-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sender_address: walletAddress, 
-          target_address: targetAddress.trim(), 
-          amount_mojo: Math.floor(parseFloat(amount) * 1_000_000_000_000), 
-          fee_mojo: targetFeeMojo 
+          unhardened_pk: computedPkHex, // ИСПРАВЛЕНО: уходим от серверного wallet_id
+          target_address: targetAddress.trim(),
+          amount_mojo: Math.floor(parseFloat(amount) * 1_000_000_000_000),
+          fee_mojo: targetFeeMojo
         }),
       })
 
@@ -61,9 +70,9 @@ export function SendModal({ isOpen, onClose, signMessage }: SendModalProps) {
         const errData = await buildResponse.json()
         throw new Error(errData.message || "Не удалось собрать транзакцию на бэкенде")
       }
-      
+
       const buildData = await buildResponse.json()
-      
+
       if (buildData.status === "error") {
         throw new Error(buildData.message || "Ошибка генерации на бэкенде")
       }
@@ -91,7 +100,7 @@ export function SendModal({ isOpen, onClose, signMessage }: SendModalProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tx_data: buildData.tx_data, 
+          tx_data: buildData.tx_data,
           signature: signatureHex,
         }),
       })

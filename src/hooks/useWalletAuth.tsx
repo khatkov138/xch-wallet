@@ -12,7 +12,7 @@ const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут сессии
 const CHIA_PORT = 12381
 const CHIA_COIN = 8444
 
-// Криптографические константы Chia для синтетического ключа
+// Криптографические константы Chia для synthetic_key
 const GROUP_ORDER = BigInt("0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
 const DEFAULT_HIDDEN_PUZZLE_HASH = "711d6c4e32c92e53179b1994a5288a2da05bde7851007a413da9f27dda2c8ceb"
 
@@ -104,9 +104,26 @@ export function useWalletAuth() {
   }, [])
 
   // =========================================================================
-  // ИСПРАВЛЕННЫЙ МЕТОД ПОДПИСИ И ЛОКАЛЬНОЙ ВЕРИФИКАЦИИ (ЭТАП 2 И 3)
+  // СВЕЖИЙ МЕТОД: Быстрое извлечение Unhardened Wallet PK Hex для питона
   // =========================================================================
-      // =========================================================================
+  const getUnhardenedPkHex = useCallback((): string | null => {
+    try {
+      if (!decryptedPhrase) {
+        console.error("[ChiaCrypto] Ошибка: мнемоника отсутствует в памяти кошелька")
+        return null
+      }
+      const seed = bip39.mnemonicToSeedSync(decryptedPhrase.trim())
+      const masterSk = PrivateKey.fromSeed(seed)
+      const unhardenedWalletSk = derivePathUnhardened(masterSk, [CHIA_PORT, CHIA_COIN, 2, 0])
+      const unhardenedWalletPk = unhardenedWalletSk.getG1()
+      return Buffer.from(unhardenedWalletPk.toBytes()).toString('hex')
+    } catch (e) {
+      console.error("Критическая ошибка вычисления публичного ключа:", e)
+      return null
+    }
+  }, [decryptedPhrase])
+
+  // =========================================================================
   // ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ МЕТОД ПОДПИСИ (КАНОН CHIA CLVM SYNTHETIC KEY)
   // =========================================================================
   const signMessage = useCallback((messageHashHex: string): string | null => {
@@ -118,49 +135,41 @@ export function useWalletAuth() {
 
       console.log("%c 🔐 [XCHA FRONTEND - ЭТАП 2: ГЕНЕРАЦИЯ ПОДПИСИ] ", "background: #10B981; color: white; font-weight: bold; padding: 4px; border-radius: 4px;")
 
-      // 1. Из сида восстанавливаем мастер-ключ
       const seed = bip39.mnemonicToSeedSync(decryptedPhrase.trim())
       const masterSk = PrivateKey.fromSeed(seed)
 
-      // 2. Деривируем Unhardened Wallet Private Key по пути (2, 0)
       const unhardenedWalletSk = derivePathUnhardened(masterSk, [CHIA_PORT, CHIA_COIN, 2, 0])
       const unhardenedWalletPk = unhardenedWalletSk.getG1()
 
-      // 3. ИСПРАВЛЕНО: Канонический расчет CLVM Tree Hash для твика (Synthetic Key)
-      const pkBytes = unhardenedWalletPk.toBytes() // 48 байт
-      const hiddenPuzzleBytes = hexToBytes(DEFAULT_HIDDEN_PUZZLE_HASH) // 32 байта
+      const pkBytes = unhardenedWalletPk.toBytes()
+      const hiddenPuzzleBytes = hexToBytes(DEFAULT_HIDDEN_PUZZLE_HASH)
 
-      // Вычисляем хэш левого листа (атома публичного ключа): sha256(0x01 + pkBytes)
       const leftAtom = new Uint8Array(1 + pkBytes.length)
-      leftAtom[0] = 0x01 // Префикс атома в CLVM
+      leftAtom[0] = 0x01
       leftAtom.set(pkBytes, 1)
       const leftHash = sha256(leftAtom)
 
-      // Вычисляем хэш пары (дерево условий): sha256(0x02 + leftHash + hiddenPuzzleBytes)
       const pairBuffer = new Uint8Array(1 + leftHash.length + hiddenPuzzleBytes.length)
-      pairBuffer[0] = 0x02 // Префикс пары в CLVM
+      pairBuffer[0] = 0x02
       pairBuffer.set(leftHash, 1)
       pairBuffer.set(hiddenPuzzleBytes, 1 + leftHash.length)
 
-      // Итоговый хэш твика
       const tweakHash = sha256(pairBuffer)
       const tweakBigInt = BigInt("0x" + bytesToHex(tweakHash))
 
-      // 4. Длинная арифметика BigInt для синтетического приватного ключа по модулю кривой
       const walletSkBigInt = BigInt("0x" + unhardenedWalletSk.toHex())
       const syntheticSkBigInt = (walletSkBigInt + tweakBigInt) % GROUP_ORDER
-      
+
       const syntheticSkHex = syntheticSkBigInt.toString(16).padStart(64, '0')
       const syntheticSk = PrivateKey.fromHex(syntheticSkHex)
 
-      // 5. Подписание message_hash_hex (генерация подписи AugSchemeMPL)
       const msgBytes = hexToBytes(messageHashHex)
       const signature = AugSchemeMPL.sign(syntheticSk, msgBytes)
       const signatureHex = signature.toHex()
 
       console.log(`1. Успешно сгенерирована подпись: ${signatureHex}`)
       console.log("%c ---------------------------------------------------------------- ", "color: #52525b;")
-      
+
       return signatureHex
 
     } catch (e) {
@@ -168,7 +177,6 @@ export function useWalletAuth() {
       return null
     }
   }, [decryptedPhrase])
-
 
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
@@ -179,7 +187,6 @@ export function useWalletAuth() {
         throw new Error("Не удалось рассчитать публичный ключ кошелька")
       }
 
-      // Отправляем публичный ключ на бэкенд Full Node
       const response = await fetch("/api/chia/address", {
         method: "POST",
         headers: {
@@ -201,12 +208,10 @@ export function useWalletAuth() {
       const realChiaAddress = data.address
       console.log(`%c [XCHA API SUCCESS] Реальный адрес получен: ${realChiaAddress}`, "color: #10B981; font-weight: bold;")
 
-      // Записываем таймстамп окончания сессии активности
       if (typeof window !== 'undefined') {
         sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       }
 
-      // Передаем адрес И мнемонику в Zustand. Стор сам закинет их в sessionStorage
       setWalletData(realChiaAddress, activeMnemonic)
       setScreenLocked(false)
 
@@ -216,7 +221,6 @@ export function useWalletAuth() {
     }
   }, [setWalletData, setScreenLocked, logCryptoAudit])
 
-  // Жизненный цикл сессии и проверка авторизации при F5
   useEffect(() => {
     const initAuth = async () => {
       if (typeof window === 'undefined') return
@@ -233,7 +237,6 @@ export function useWalletAuth() {
       const now = Date.now()
       const isSessionValid = sessionExpires && now < parseInt(sessionExpires, 10)
 
-      // ИСПРАВЛЕНИЕ ДЛЯ F5
       if (isSessionValid && walletAddress && decryptedPhrase) {
         setScreenLocked(false)
       } else {
@@ -245,6 +248,7 @@ export function useWalletAuth() {
 
     initAuth()
   }, [walletAddress, decryptedPhrase, lockWallet, setVerifying, setScreenLocked])
+
   useEffect(() => {
     if (isVerifying || isScreenLocked) return
     let timeoutId: NodeJS.Timeout
@@ -253,7 +257,7 @@ export function useWalletAuth() {
       clearTimeout(timeoutId)
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       timeoutId = setTimeout(() => {
-        lockWallet() // Автоматически затирает стор Zustand при простое
+        lockWallet()
       }, INACTIVITY_TIMEOUT)
     }
     const events = ["mousemove", "keydown", "touchstart", "click"]
@@ -271,6 +275,8 @@ export function useWalletAuth() {
     isScreenLocked,
     handleUnlockSuccess,
     lockWallet,
+    logCryptoAudit,
+    getUnhardenedPkHex,
     signMessage
   }
 }
