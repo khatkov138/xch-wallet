@@ -168,44 +168,55 @@ export async function decryptMnemonic(encryptedData: string, pin: string): Promi
  * Полный аудит ключей кошелька Chia с выводом в консоль фронтенда.
  * Возвращает unhardened_wallet_pk_hex для бэкенда.
  */
+export interface CryptoAuditResult {
+  mnemonic: string;
+  master_sk_hex: string;
+  master_pk_hex: string;
+  fingerprint: number;
+  farmer_pk_hex: string;
+  pool_pk_hex: string;
+  wallet_sk_hardened_hex: string;
+  unhardened_wallet_pk_hex: string;
+}
 export function runCryptoAudit(clearMnemonic: string): string | null {
   try {
-    const seed = bip39.mnemonicToSeedSync(clearMnemonic.trim())
-    const master_sk = PrivateKey.fromSeed(seed)
-    const master_sk_hex = master_sk.toHex()
+    const trimmedMnemonic = clearMnemonic.trim();
+    const seed = bip39.mnemonicToSeedSync(trimmedMnemonic);
+    const master_sk = PrivateKey.fromSeed(seed);
+    const master_sk_hex = master_sk.toHex();
 
-    const master_pk = master_sk.getG1()
-    const master_pk_hex = master_pk.toHex()
-    const fingerprint = master_pk.getFingerprint()
+    const master_pk = master_sk.getG1();
+    const master_pk_hex = master_pk.toHex();
+    const fingerprint = master_pk.getFingerprint();
 
-    const farmer_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 0, 0])
-    const farmer_pk_hex = farmer_sk.getG1().toHex()
+    const farmer_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 0, 0]);
+    const farmer_pk_hex = farmer_sk.getG1().toHex();
 
-    const pool_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 1, 0])
-    const pool_pk_hex = pool_sk.getG1().toHex()
+    const pool_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 1, 0]);
+    const pool_pk_hex = pool_sk.getG1().toHex();
 
-    const wallet_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0])
-    const wallet_sk_hex = wallet_sk.toHex()
+    const wallet_sk = derivePath(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0]);
+    const wallet_sk_hex = wallet_sk.toHex();
 
-    const unhardened_wallet_sk = derivePathUnhardened(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0])
-    const unhardened_wallet_pk = unhardened_wallet_sk.getG1()
-    const unhardened_wallet_pk_hex = bytesToHex(unhardened_wallet_pk.toBytes())
+    const unhardened_wallet_sk = derivePathUnhardened(master_sk, [CHIA_PORT, CHIA_COIN, 2, 0]);
+    const unhardened_wallet_pk = unhardened_wallet_sk.getG1();
+    const unhardened_wallet_pk_hex = bytesToHex(unhardened_wallet_pk.toBytes());
 
-    console.log("%c 🔑 [XCHA FRONTEND CRYPTO AUDIT] ", "background: #8B5CF6; color: white; font-weight: bold; padding: 4px; border-radius: 4px;")
-    console.log(`1. Mnemonic: "${clearMnemonic.trim()}"`)
-    console.log(`2. Master SK Hex: ${master_sk_hex}`)
-    console.log(`3. Master PK Hex: ${master_pk_hex}`)
-    console.log(`4. Fingerprint: ${fingerprint}`)
-    console.log(`5. Farmer PK Hex: ${farmer_pk_hex}`)
-    console.log(`6. Pool PK Hex: ${pool_pk_hex}`)
-    console.log(`7. Wallet SK Hex (Hardened): ${wallet_sk_hex}`)
-    console.log(`🚀 ИТОГОВЫЙ ПАБЛИК ДЛЯ ПИТОНА (Unhardened PK Hex): %c${unhardened_wallet_pk_hex}`, "color: #10B981; font-weight: bold; font-size: 11px;")
-    console.log("%c ---------------------------------------------------- ", "color: #52525b;")
+    const auditData: CryptoAuditResult = {
+      mnemonic: trimmedMnemonic,
+      master_sk_hex: master_sk_hex,
+      master_pk_hex: master_pk_hex,
+      fingerprint: fingerprint,
+      farmer_pk_hex: farmer_pk_hex,
+      pool_pk_hex: pool_pk_hex,
+      wallet_sk_hardened_hex: wallet_sk_hex,
+      unhardened_wallet_pk_hex: unhardened_wallet_pk_hex
+    };
 
-    return unhardened_wallet_pk_hex
+    return JSON.stringify(auditData);
   } catch (e) {
-    console.error("Ошибка при расчете ключей на фронтенде (runCryptoAudit):", e)
-    return null
+    console.error("Ошибка при расчете ключей на фронтенде (runCryptoAudit):", e);
+    return null;
   }
 }
 
@@ -224,7 +235,7 @@ export function signTransactionSpends(syntheticSkHex: string, spendsList: any[])
 
     const cleanSkHex = syntheticSkHex.replace("0x", "");
     const skBytes = hexToBytes(cleanSkHex);
-    
+
     // Безопасно загружаем приватный ключ через байты
     const privateKey = PrivateKey.fromBytes ? PrivateKey.fromBytes(skBytes) : PrivateKey.fromHex(cleanSkHex);
     const publicKey = privateKey.getG1();
@@ -239,7 +250,7 @@ export function signTransactionSpends(syntheticSkHex: string, spendsList: any[])
     for (const spend of spendsList) {
       // Питон уже прислал нам ПОЛНОСТЬЮ готовую склейку AGG_SIG_ME!
       const finalBufferToSign = hexToBytes(spend.message_hash_hex);
-      
+
       console.log(` -> Подписание монеты ID: ${spend.coin_id.substring(0, 10)}...`);
       console.log("    Готовый хэш из питона:", spend.message_hash_hex);
 

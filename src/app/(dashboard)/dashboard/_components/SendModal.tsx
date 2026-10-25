@@ -1,5 +1,3 @@
-'use client'
-
 import React, { useState } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -10,7 +8,6 @@ interface SendModalProps {
   onClose: () => void;
 }
 
-// 🚀 Прямой адрес вашего Python сервера
 const PYTHON_BACKEND_URL = "http://127.0.0.1:8000"
 
 export function SendModal({ isOpen, onClose }: SendModalProps) {
@@ -43,9 +40,6 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
     setStatusMessage("")
     setDebugJsonString("")
 
-    // Адрес для отправки шагов на Python
-    const debugApiUrl = PYTHON_BACKEND_URL
-
     let dump: any = {
       client_context: { wallet_address: walletAddress, target_address: targetAddress.trim(), amount_xch: amount, fee_mojo: targetFeeMojo },
       step1_sent: null, step1_received: null,
@@ -60,99 +54,70 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       const pk = getUnhardenedPkHex()
       const sk = getUnhardenedSkHex()
 
-      console.log("%c🔑 [CHIA KEY INSPECTOR] ПРОВЕРКА КЛЮЧЕЙ ХУКА КОНТЕКСТА:", "color: #ff00ff; font-weight: bold;")
-      console.log("   👉 Твой текущий адрес (с хука):", walletAddress)
-      console.log("   👉 Публичный ключ (PK Hex):", pk)
-      console.log("   👉 Приватный ключ (SK Hex поднят):", sk ? `${sk.slice(0, 8)}...` : "НЕТ КЛЮЧА")
-      console.log("──────────────────────────────────────────────────")
+      // ИСПРАВЛЕНО: Красивое текстовое логирование перед отправкой для сверки с аудитом
+      console.log(
+        `%c🚀 [XCHA TX PRE-FLIGHT INSPECTOR]\n` +
+        `----------------------------------------\n` +
+        `🌍 Текущий адрес:       ${walletAddress}\n` +
+        `🔑 Canonical Wallet PK:  ${pk}\n` +
+        `🔒 Canonical Wallet SK:  ${sk ? `${sk.slice(0, 10)}...${sk.slice(-10)}` : "НЕТ КЛЮЧА"}\n` +
+        `📥 Куда отправляем:      ${targetAddress.trim()}\n` +
+        `💰 Сумма (Mojo):         ${amountMojo}\n` +
+        `⛽ Комиссия (Mojo):      ${targetFeeMojo}\n` +
+        `----------------------------------------`,
+        "color: #ff00ff; font-weight: bold; font-family: monospace;"
+      )
 
       if (!pk || !sk) throw new Error("Ошибка context ключей — хук вернул пустые значения")
 
-      // ==========================================
-      // ШАГ 1: Получение UTXO монет
-      // ==========================================
-      setStatusMessage("1/4 Запрос UTXO монет...")
+      setStatusMessage("⏳ Отправка сквозного запроса 4-в-1 на бэкенд...")
 
-      // Передаем master_pk_hex вместо одиночного puzzle_hash. 
-      // Питон получит PK и сам сгенерирует пул из 50 адресов для проверки баланса.
-      dump.step1_sent = {
-        master_pk_hex: pk, // 👈 Передаем ТОЛЬКО публичный ключ
+      // ИСПРАВЛЕНО: Привели структуру Payload в соответствие с нашей архитектурой
+      const singlePayload = {
+        canonical_wallet_pk_hex: pk,
+        canonical_wallet_sk_hex: sk,
+        target_address: targetAddress.trim(),
         amount: amountMojo,
         fee: targetFeeMojo,
         network: "testnet11"
       }
 
-      console.log("=== [STEP1 OUT] ОТПРАВЛЯЕМ ===", dump.step1_sent)
-      const r1 = await fetch(`${debugApiUrl}/step1`, {
+      console.log(
+        `%c📡 [API REQUEST] -> POST ${PYTHON_BACKEND_URL}/send-transaction\n` +
+        `📦 Payload: ${JSON.stringify(singlePayload, null, 2)}`,
+        "color: #3B82F6; font-family: monospace;"
+      )
+      
+      const response = await fetch(`${PYTHON_BACKEND_URL}/send-transaction`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dump.step1_sent)
+        body: JSON.stringify(singlePayload)
       })
-      const d1 = await r1.json()
-      console.log("=== [STEP1 IN] ПОЛУЧИЛИ ===", d1)
+      
+      const result = await response.json()
 
-      dump.step1_received = d1
-      if (!r1.ok) throw new Error(d1.detail || d1.error || "Сбой Шага 1")
-
-      // ==========================================
-      // ШАГ 2: Сборка CLVM структур и условий трат
-      // ==========================================
-      setStatusMessage("2/4 Сборка солюшена CLVM...")
-      dump.step2_sent = {
-        selected_coins: d1.selected_coins,
-        target_address_ph: targetAddress.trim(),
-        change_address_ph: d1.sender_puzzle_hash,
-        amount: amountMojo,
-        fee: targetFeeMojo,
-        public_key: pk,
-        wallet_sk_hex: sk
-      }
-      console.log("=== [STEP2 OUT] ОТПРАВЛЯЕМ ===", dump.step2_sent)
-      const r2 = await fetch(`${debugApiUrl}/step2`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step2_sent) })
-      const d2 = await r2.json()
-      console.log("=== [STEP2 IN] ПОЛУЧИЛИ ===", d2)
-
-      dump.step2_received = d2
-      if (!r2.ok) throw new Error(d2.detail || d2.error || "Сбой Шага 2")
-
-      // ==========================================
-      // ШАГ 3: Расчет хешей AGG_SIG_ME и BLS подписание
-      // ==========================================
-      setStatusMessage("3/4 BLS подписание...")
-      dump.step3_sent = {
-        coin_spends: d2.coin_spends,
-        genesis_challenge: "0d6c3eda25350189907651ec99e46fa69c5e36d4086f8a9c569014a7300961d0",
-        wallet_sk_hex: sk,
-        rpc_signature: d2.rpc_signature
-      }
-      console.log("=== [STEP3 OUT] ОТПРАВЛЯЕМ ===", dump.step3_sent)
-      const r3 = await fetch(`${debugApiUrl}/step3`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step3_sent) })
-      const d3 = await r3.json()
-      console.log("=== [STEP3 IN] ПОЛУЧИЛИ ===", d3)
-
-      const finalSignature = d3.aggregated_signature || d3.signature
-      if (!finalSignature) throw new Error("Агрегированная BLS подпись не найдена в ответе Шага 3")
-
-      // ==========================================
-      // ШАГ 4: Пуш готового SpendBundle в полную ноду Chia
-      // ==========================================
-      setStatusMessage("4/4 Пуш SpendBundle в ноду...")
-      dump.step4_sent = {
-        coin_spends: d2.coin_spends,
-        aggregated_signature: finalSignature,
-        network: "testnet11",
-        node_url: "https://localhost:8555"
+      if (result.debug_flow) {
+        dump.step1_sent = result.debug_flow.step1_sent
+        dump.step1_received = result.debug_flow.step1_received
+        dump.step2_sent = result.debug_flow.step2_sent
+        dump.step2_received = result.debug_flow.step2_received
+        dump.step3_sent = result.debug_flow.step3_sent
+        dump.step3_received = result.debug_flow.step3_received
+        dump.step4_sent = result.debug_flow.step4_sent
+        dump.step4_received = result.debug_flow.step4_received
       }
 
-      console.log("=== [STEP4 OUT] ОТПРАВЛЯЕМ ===", dump.step4_sent)
-      const r4 = await fetch(`${debugApiUrl}/step4`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step4_sent) })
-      const d4 = await r4.json()
-      console.log("=== [STEP4 IN] ПОЛУЧИЛИ ===", d4)
+      console.log(
+        `%c📥 [API RESPONSE] <- Status: ${response.status}\n` +
+        `📄 Data: ${JSON.stringify(result, null, 2)}`,
+        result.status === "success" ? "color: #10B981; font-family: monospace;" : "color: #EF4444; font-family: monospace;"
+      )
 
-      dump.step4_received = d4
-      if (!r4.ok || d4.success === false) throw new Error(d4.detail || d4.error || "Мемпул ноды отклонил транзакцию")
+      if (!response.ok || result.status !== "success") {
+        throw new Error(result.detail || result.error || "Мемпул ноды отклонил транзакцию")
+      }
 
-      setStatusMessage("🎉 Успешно! Транзакция в мемпуле!")
+      setStatusMessage(`🎉 Успешно! Транзакция в мемпуле! ID: ${result.tx_id}`)
       setDebugJsonString(JSON.stringify(dump, null, 2))
     } catch (err: any) {
       setStatusMessage(`❌ Ошибка: ${err.message || err}`)
@@ -161,8 +126,6 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       setLoading(false)
     }
   }
-
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl max-h-[95vh] overflow-y-auto">
