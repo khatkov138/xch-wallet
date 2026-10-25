@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ANSI Цветовые коды для терминала Windows / Linux
@@ -29,18 +30,18 @@ logging.basicConfig(
 logger = logging.getLogger("CHIA_MINI")
 
 # =====================================================================
-# ИМПОРТ СТАРЫХ ВЕРСИЙ (ИЗ КОРНЯ ДИРЕКТОРИИ - WALLET RPC)
+# ИМПОРТ МОДЕЛЕЙ ДАННЫХ (Pydantic схемы)
 # =====================================================================
-from step1_get_coins import run_step1, Step1Input
-from step2_build_clvm import run_step2, Step2Input
-from step3_calc_hashes import run_step3, Step3Input
-from step4_submit_tx import run_step4, Step4Input
+from step1_get_coins import Step1Input
+from step2_build_clvm import Step2Input
+from step3_calc_hashes import Step3Input
+from step4_submit_tx import Step4Input
 
 # =====================================================================
-# ЖЕЛЕЗОБЕТОННЫЙ ЗАГРУЗЧИК С АБСОЛЮТНЫМ ВЫВОДОМ ИМЕНИ ФАЙЛА
+# ДИНАМИЧЕСКИЙ ЗАГРУЗЧИК ФАЙЛОВ ИЗ КОРНЯ
 # =====================================================================
-def force_load_new_file(file_name: str, func_name: str):
-    absolute_path = os.path.normpath(os.path.join(BASE_DIR, "new", file_name))
+def force_load_file(file_name: str, func_name: str):
+    absolute_path = os.path.normpath(os.path.join(BASE_DIR, file_name))
     
     if not os.path.exists(absolute_path):
         print(f"[PATH CHECK] {C_RED}ОШИБКА: Файл '{file_name}' НЕ НАЙДЕН. Ожидаемый путь: {absolute_path}{C_RESET}")
@@ -56,15 +57,29 @@ def force_load_new_file(file_name: str, func_name: str):
         logger.error(f"{C_RED}❌ Ошибка компиляции файла {file_name}: {str(e)}{C_RESET}")
         return None
 
-# Принудительно связываем функции при старте
-print(f"\n{C_MAGENTA}=== ПРОВЕРКА НАЛИЧИЯ ФАЙЛОВ В ПАПКЕ /new ==={C_RESET}")
-run_step1_new = force_load_new_file("step1_get_coins.py", "run_step1")
-run_step2_new = force_load_new_file("step2_build_clvm.py", "run_step2")
-run_step3_new = force_load_new_file("step3_calc_hashes.py", "run_step3")
-run_step4_new = force_load_new_file("step4_submit_tx.py", "run_step4")
+# Принудительно связываем функции при старте из корня директории
+print(f"\n{C_MAGENTA}=== ПРОВЕРКА НАЛИЧИЯ ИСПОЛНЯЕМЫХ ФАЙЛОВ ==={C_RESET}")
+run_step1_func = force_load_file("step1_get_coins.py", "run_step1")
+run_step2_func = force_load_file("step2_build_clvm.py", "run_step2")
+run_step3_func = force_load_file("step3_calc_hashes.py", "run_step3")
+run_step4_func = force_load_file("step4_submit_tx.py", "run_step4")
 print(f"{C_MAGENTA}============================================\n{C_RESET}")
 
 app = FastAPI()
+
+# =====================================================================
+# НАСТРОЙКА CORS
+# =====================================================================
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def shrink_data(obj: Any) -> Any:
     if isinstance(obj, dict):
@@ -81,95 +96,67 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     logger.error(f"{C_RED}❌ 422 VALIDATION ERR: {json.dumps(err_body)}{C_RESET}")
     return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, content=err_body)
 
-async def log_and_compare(endpoint: str, req_data: bytes, old_runner, new_runner, runner_file_name, input_model):
-    try:
-        req_json = json.loads(req_data) if req_data else {}
-    except:
-        req_json = {"raw": req_data.decode(errors='ignore')}
-    
-    logger.info(f"{C_MAGENTA}======================================================={C_RESET}")
-    logger.info(f"{C_BLUE}==> [{endpoint}] ВХОДЯЩИЙ ЗАПРОС:{C_RESET} {json.dumps(shrink_data(req_json), ensure_ascii=False)}")
-    
-    # 1. Выполнение старой RPC версии
-    logger.info(f"{C_YELLOW}--- [RPC ВЕРСИЯ] СТАРТ ---{C_RESET}")
-    try:
-        parsed_data_old = input_model(**req_json)
-        old_result = old_runner(parsed_data_old)
-        logger.info(f"{C_YELLOW}<== [RPC ВЕРСИЯ] ВЫХОД:{C_RESET} {json.dumps(shrink_data(old_result), ensure_ascii=False)}")
-    except Exception as e:
-        old_result = {"error": str(e)}
-        logger.error(f"{C_RED}❌ <== [RPC ВЕРСИЯ] ОШИБКА: {str(e)}{C_RESET}")
-
-    # 2. Выполнение новой математической версии
-    logger.info(f"{C_GREEN}--- [NEW ВЕРСИЯ (МАТЕМАТИКА В /NEW)] СТАРТ ---{C_RESET}")
-    try:
-        parsed_data_new = input_model(**req_json)
-        if new_runner is None:
-            logger.info(f"{C_GREEN}<== [NEW ВЕРСИЯ] ВЫХОД:{C_RESET} {C_RED}Файл 'new/{runner_file_name}' отсутствует на диске или функция не найдена{C_RESET}")
-        else:
-            new_result = new_runner(parsed_data_new)
-            logger.info(f"{C_GREEN}<== [NEW ВЕРСИЯ] ВЫХОД:{C_RESET} {json.dumps(shrink_data(new_result), ensure_ascii=False)}")
-    except Exception as e:
-        logger.error(f"{C_RED}❌ <== [NEW ВЕРСИЯ] ОШИБКА: {str(e)}{C_RESET}")
-        
-    logger.info(f"{C_MAGENTA}======================================================={C_RESET}\n")
-    
-    if "error" in old_result:
-        raise HTTPException(status_code=400, detail=old_result["error"].replace('\n', ' | '))
-    return old_result
-
 # =====================================================================
 # ЭНДПОИНТЫ
-# =====================================================================
-# =====================================================================
-# ЧИСТЫЕ ЭНДПОИНТЫ НА НОВЫЙ ЛАД (ТОЛЬКО /NEW БЕЗ WALLET RPC)
 # =====================================================================
 
 @app.post("/step1")
 async def step1_endpoint(data: Step1Input): 
-    if run_step1_new is None:
-        raise HTTPException(status_code=500, detail="Файл 'new/step1_get_coins.py' отсутствует или не скомпилирован")
+    if run_step1_func is None:
+        raise HTTPException(status_code=500, detail="Файл 'step1_get_coins.py' отсутствует или не скомпилирован")
     try:
-        logger.info(f"{C_GREEN}--- [RUN STEP 1 NEW] ---{C_RESET}")
-        return run_step1_new(data)
+        logger.info(f"{C_GREEN}--- [RUN STEP 1] ---{C_RESET}")
+        logger.info(f"{C_BLUE}Вход:{C_RESET} {json.dumps(shrink_data(data.model_dump()), ensure_ascii=False)}")
+        result = run_step1_func(data)
+        logger.info(f"{C_GREEN}Выход:{C_RESET} {json.dumps(shrink_data(result), ensure_ascii=False)}")
+        return result
     except Exception as e:
-        logger.error(f"{C_RED}Ошибка Шага 1 NEW: {str(e)}{C_RESET}")
+        logger.error(f"{C_RED}Ошибка Шага 1: {str(e)}{C_RESET}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/step2")
 async def step2_endpoint(data: Step2Input): 
-    if run_step2_new is None:
-        raise HTTPException(status_code=500, detail="Файл 'new/step2_build_clvm.py' отсутствует или не скомпилирован")
+    if run_step2_func is None:
+        raise HTTPException(status_code=500, detail="Файл 'step2_build_clvm.py' отсутствует или не скомпилирован")
     try:
-        logger.info(f"{C_GREEN}--- [RUN STEP 2 NEW] ---{C_RESET}")
-        return run_step2_new(data)
+        logger.info(f"{C_GREEN}--- [RUN STEP 2] ---{C_RESET}")
+        logger.info(f"{C_BLUE}Вход:{C_RESET} {json.dumps(shrink_data(data.model_dump()), ensure_ascii=False)}")
+        result = run_step2_func(data)
+        logger.info(f"{C_GREEN}Выход:{C_RESET} {json.dumps(shrink_data(result), ensure_ascii=False)}")
+        return result
     except Exception as e:
-        logger.error(f"{C_RED}Ошибка Шага 2 NEW: {str(e)}{C_RESET}")
+        logger.error(f"{C_RED}Ошибка Шага 2: {str(e)}{C_RESET}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/step3")
 async def step3_endpoint(data: Step3Input): 
-    if run_step3_new is None:
-        raise HTTPException(status_code=500, detail="Файл 'new/step3_calc_hashes.py' отсутствует или не скомпилирован")
+    if run_step3_func is None:
+        raise HTTPException(status_code=500, detail="Файл 'step3_calc_hashes.py' отсутствует или не скомпилирован")
     try:
-        logger.info(f"{C_GREEN}--- [RUN STEP 3 NEW] ---{C_RESET}")
-        return run_step3_new(data)
+        logger.info(f"{C_GREEN}--- [RUN STEP 3] ---{C_RESET}")
+        logger.info(f"{C_BLUE}Вход:{C_RESET} {json.dumps(shrink_data(data.model_dump()), ensure_ascii=False)}")
+        result = run_step3_func(data)
+        logger.info(f"{C_GREEN}Выход:{C_RESET} {json.dumps(shrink_data(result), ensure_ascii=False)}")
+        return result
     except Exception as e:
-        logger.error(f"{C_RED}Ошибка Шага 3 NEW: {str(e)}{C_RESET}")
+        logger.error(f"{C_RED}Ошибка Шага 3: {str(e)}{C_RESET}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/step4")
 async def step4_endpoint(data: Step4Input): 
-    if run_step4_new is None:
-        raise HTTPException(status_code=500, detail="Файл 'new/step4_submit_tx.py' отсутствует или не скомпилирован")
+    if run_step4_func is None:
+        raise HTTPException(status_code=500, detail="Файл 'step4_submit_tx.py' отсутствует или не скомпилирован")
     try:
-        logger.info(f"{C_GREEN}--- [RUN STEP 4 NEW] ---{C_RESET}")
-        return run_step4_new(data)
+        logger.info(f"{C_GREEN}--- [RUN STEP 4] ---{C_RESET}")
+        logger.info(f"{C_BLUE}Вход:{C_RESET} {json.dumps(shrink_data(data.model_dump()), ensure_ascii=False)}")
+        result = run_step4_func(data)
+        logger.info(f"{C_GREEN}Выход:{C_RESET} {json.dumps(shrink_data(result), ensure_ascii=False)}")
+        return result
     except Exception as e:
-        logger.error(f"{C_RED}Ошибка Шага 4 NEW: {str(e)}{C_RESET}")
+        logger.error(f"{C_RED}Ошибка Шага 4: {str(e)}{C_RESET}")
         raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":

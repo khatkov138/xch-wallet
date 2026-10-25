@@ -28,7 +28,10 @@ export function ActivityList({ currentAddress }: ActivityListProps) {
       </div>
 
       <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
-        <CardContent className="p-2 space-y-1">
+        {/* max-h-[350px] ограничивает высоту (можешь поменять на нужную), 
+            overflow-y-auto включает скролл, 
+            а scrollbar-thin делает его тоньше в поддерживаемых браузерах */}
+        <CardContent className="p-2 space-y-1 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
           {transactions.length === 0 ? (
             <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
               История транзакций пуста

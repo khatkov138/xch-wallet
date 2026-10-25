@@ -23,7 +23,7 @@ export default function DashboardPage() {
     isVerifying,
     isScreenLocked,
     handleUnlockSuccess,
-    signMessage // <-- Вытаскиваем готовый метод подписания и верификации
+   
   } = useWalletAuth()
 
   if (isVerifying) {
@@ -80,7 +80,7 @@ export default function DashboardPage() {
         isOpen={isSendOpen}
         onClose={() => setIsSendOpen(false)}
        
-        signMessage={signMessage}
+       
       />
     </div>
   )

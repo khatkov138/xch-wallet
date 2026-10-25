@@ -23,7 +23,7 @@ export function WalletLayout({ children, variant, version }: WalletLayoutProps) 
     queryKey: ['chiaNodeStatus'],
     queryFn: () => handleApi<NodeShortStatus>(fetch("/api/rpc/node-status")),
 
-    refetchInterval: 15000,
+    refetchInterval: 30000,
     staleTime: 5000,
   })
 

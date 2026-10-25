@@ -5,7 +5,13 @@ import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 
-interface SendModalProps { isOpen: boolean; onClose: () => void }
+interface SendModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+// 🚀 Прямой адрес вашего Python сервера
+const PYTHON_BACKEND_URL = "http://127.0.0.1:8000"
 
 export function SendModal({ isOpen, onClose }: SendModalProps) {
   const { walletAddress, getUnhardenedPkHex, getUnhardenedSkHex } = useWalletAuth()
@@ -33,8 +39,12 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       return
     }
 
-    setLoading(true); setStatusMessage(""); setDebugJsonString("")
-    const debugApiUrl = "/api/chia/debug"
+    setLoading(true)
+    setStatusMessage("")
+    setDebugJsonString("")
+
+    // Адрес для отправки шагов на Python
+    const debugApiUrl = PYTHON_BACKEND_URL
 
     let dump: any = {
       client_context: { wallet_address: walletAddress, target_address: targetAddress.trim(), amount_xch: amount, fee_mojo: targetFeeMojo },
@@ -47,14 +57,12 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
     try {
       const amountMojo = Math.floor(parseFloat(amount) * 1_000_000_000_000)
 
-      // 🔍 ИНСПЕКЦИЯ КЛЮЧЕЙ В КОНСОЛИ БРАУЗЕРА (F12)
-      const pk = getUnhardenedPkHex?.()
-      const sk = getUnhardenedSkHex?.()
+      const pk = getUnhardenedPkHex()
+      const sk = getUnhardenedSkHex()
 
       console.log("%c🔑 [CHIA KEY INSPECTOR] ПРОВЕРКА КЛЮЧЕЙ ХУКА КОНТЕКСТА:", "color: #ff00ff; font-weight: bold;")
       console.log("   👉 Твой текущий адрес (с хука):", walletAddress)
       console.log("   👉 Публичный ключ (PK Hex):", pk)
-      console.log("   👉 Длина PK:", pk ? pk.length : 0, "символов")
       console.log("   👉 Приватный ключ (SK Hex поднят):", sk ? `${sk.slice(0, 8)}...` : "НЕТ КЛЮЧА")
       console.log("──────────────────────────────────────────────────")
 
@@ -64,15 +72,27 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       // ШАГ 1: Получение UTXO монет
       // ==========================================
       setStatusMessage("1/4 Запрос UTXO монет...")
-      dump.step1_sent = { puzzle_hash: walletAddress, amount: amountMojo, fee: targetFeeMojo, network: "testnet11" }
+
+      // Передаем master_pk_hex вместо одиночного puzzle_hash. 
+      // Питон получит PK и сам сгенерирует пул из 50 адресов для проверки баланса.
+      dump.step1_sent = {
+        master_pk_hex: pk, // 👈 Передаем ТОЛЬКО публичный ключ
+        amount: amountMojo,
+        fee: targetFeeMojo,
+        network: "testnet11"
+      }
 
       console.log("=== [STEP1 OUT] ОТПРАВЛЯЕМ ===", dump.step1_sent)
-      const r1 = await fetch(`${debugApiUrl}/step1`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step1_sent) })
+      const r1 = await fetch(`${debugApiUrl}/step1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dump.step1_sent)
+      })
       const d1 = await r1.json()
       console.log("=== [STEP1 IN] ПОЛУЧИЛИ ===", d1)
 
       dump.step1_received = d1
-      if (!r1.ok) throw new Error(d1.error || d1.detail || "Сбой Шага 1")
+      if (!r1.ok) throw new Error(d1.detail || d1.error || "Сбой Шага 1")
 
       // ==========================================
       // ШАГ 2: Сборка CLVM структур и условий трат
@@ -85,7 +105,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
         amount: amountMojo,
         fee: targetFeeMojo,
         public_key: pk,
-        wallet_sk_hex: sk // 👈 ПРОСТО ДОБАВЬ СЮДА ЭТУ СТРОКУ
+        wallet_sk_hex: sk
       }
       console.log("=== [STEP2 OUT] ОТПРАВЛЯЕМ ===", dump.step2_sent)
       const r2 = await fetch(`${debugApiUrl}/step2`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step2_sent) })
@@ -93,7 +113,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       console.log("=== [STEP2 IN] ПОЛУЧИЛИ ===", d2)
 
       dump.step2_received = d2
-      if (!r2.ok) throw new Error(d2.error || d2.detail || "Сбой Шага 2")
+      if (!r2.ok) throw new Error(d2.detail || d2.error || "Сбой Шага 2")
 
       // ==========================================
       // ШАГ 3: Расчет хешей AGG_SIG_ME и BLS подписание
@@ -103,7 +123,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
         coin_spends: d2.coin_spends,
         genesis_challenge: "0d6c3eda25350189907651ec99e46fa69c5e36d4086f8a9c569014a7300961d0",
         wallet_sk_hex: sk,
-        rpc_signature: d2.rpc_signature // 👈 ДОБАВЬ ТОЛЬКО ЭТУ СТРОКУ
+        rpc_signature: d2.rpc_signature
       }
       console.log("=== [STEP3 OUT] ОТПРАВЛЯЕМ ===", dump.step3_sent)
       const r3 = await fetch(`${debugApiUrl}/step3`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump.step3_sent) })
@@ -130,7 +150,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       console.log("=== [STEP4 IN] ПОЛУЧИЛИ ===", d4)
 
       dump.step4_received = d4
-      if (!r4.ok || d4.success === false) throw new Error(d4.error || d4.detail || "Мемпул ноды отклонил транзакцию")
+      if (!r4.ok || d4.success === false) throw new Error(d4.detail || d4.error || "Мемпул ноды отклонил транзакцию")
 
       setStatusMessage("🎉 Успешно! Транзакция в мемпуле!")
       setDebugJsonString(JSON.stringify(dump, null, 2))
@@ -141,6 +161,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       setLoading(false)
     }
   }
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

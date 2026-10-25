@@ -85,7 +85,7 @@ export function useWalletAuth() {
         },
         body: JSON.stringify({ wallet_pk_hex: walletPublicKeyHex }),
       })
-
+      console.log('🔑walletPublicKeyHex🔑 ' + walletPublicKeyHex)
       if (!response.ok) {
         throw new Error(`Сервер вернул статус ${response.status} при запросе адреса`)
       }
