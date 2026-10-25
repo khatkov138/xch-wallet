@@ -72,28 +72,19 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
 
       setStatusMessage("⏳ Отправка сквозного запроса 4-в-1 на бэкенд...")
 
-      // ИСПРАВЛЕНО: Привели структуру Payload в соответствие с нашей архитектурой
-      const singlePayload = {
-        canonical_wallet_pk_hex: pk,
-        canonical_wallet_sk_hex: sk,
-        target_address: targetAddress.trim(),
+      const strictPayload = {
         amount: amountMojo,
-        fee: targetFeeMojo,
-        network: "testnet11"
+        fee: targetFeeMojo
       }
 
-      console.log(
-        `%c📡 [API REQUEST] -> POST ${PYTHON_BACKEND_URL}/send-transaction\n` +
-        `📦 Payload: ${JSON.stringify(singlePayload, null, 2)}`,
-        "color: #3B82F6; font-family: monospace;"
-      )
-      
+      console.log(`📡 [API REQUEST] -> POST ${PYTHON_BACKEND_URL}/send-transaction`, strictPayload)
+
       const response = await fetch(`${PYTHON_BACKEND_URL}/send-transaction`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(singlePayload)
+        body: JSON.stringify(strictPayload) // Теперь летят только два чистых инта!
       })
-      
+
       const result = await response.json()
 
       if (result.debug_flow) {

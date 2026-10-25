@@ -19,7 +19,7 @@ export default function DashboardPage() {
 
   const {
     walletAddress,
-    decryptedPhrase,
+   
     isVerifying,
     isScreenLocked,
     handleUnlockSuccess,
