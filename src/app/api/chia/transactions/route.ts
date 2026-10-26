@@ -15,7 +15,8 @@ interface ChiaCoinRecord {
   spent_height?: number;          
   confirmed_height?: number;       
   spent: boolean;
-  id?: string; // Поле id в Chia RPC часто отсутствует в сырых ответах
+  id?: string;
+  timestamp?: number; // Точный timestamp блока из Chia RPC ноды
   coin: {
     amount: number | string;
     parent_coin_info: string;
@@ -150,16 +151,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const coinRecords = nodeResponseData.coin_records || []
-    
-    let maxKnownHeight = 0
-    for (const r of coinRecords) {
-      const h = r.spent_block_index || r.confirmed_block_index || r.spent_height || r.confirmed_height || 0
-      if (h > maxKnownHeight) maxKnownHeight = h
-    }
-
-    const nowSeconds = Math.floor(Date.now() / 1000)
     const SECONDS_PER_BLOCK = 18.75 
-
     const finalHistory: CleanTransaction[] = [];
 
     for (const record of coinRecords) {
@@ -167,15 +159,23 @@ export async function GET(request: Request): Promise<NextResponse> {
 
       const amountMojo = BigInt(record.coin.amount);
       const amountXch = formatMojoToXch(amountMojo);
-
-      // ИСПРАВЛЕНИЕ: Если нода не вернула record.id, собираем железный уникальный ID из свойств монеты
       const fallbackCoinId = record.id || `${record.coin.parent_coin_info.slice(0, 10)}_${record.coin.amount}`;
 
-      // 1. Монета была создана (входящая)
       const cHeight = record.confirmed_block_index ?? record.confirmed_height ?? 0;
-      let cTimestamp = nowSeconds;
-      if (maxKnownHeight > 0 && cHeight > 0) {
-        cTimestamp = nowSeconds - Math.floor((maxKnownHeight - cHeight) * SECONDS_PER_BLOCK);
+      const sHeight = record.spent_block_index ?? record.spent_height ?? 0;
+      
+      // Опорный стабильный timestamp из ноды (дефолт на случай, если блок совсем свежий)
+      const baseTimestamp = record.timestamp ?? Math.floor(Date.now() / 1000);
+
+      // 1. Расчет времени для входящей транзакции (создание монеты)
+      let cTimestamp = baseTimestamp;
+      if (record.spent && sHeight > cHeight) {
+        // Если монета уже потрачена, нода возвращает timestamp траты.
+        // Чтобы узнать время создания, отматываем секунды назад на основе разницы блоков.
+        cTimestamp = baseTimestamp - Math.floor((sHeight - cHeight) * SECONDS_PER_BLOCK);
+      } else if (!record.spent && cHeight > 0) {
+        // Если монета не потрачена, возвращаемый timestamp — это и есть время её создания.
+        cTimestamp = baseTimestamp;
       }
 
       finalHistory.push({
@@ -186,19 +186,14 @@ export async function GET(request: Request): Promise<NextResponse> {
         type: 1 
       });
 
-      // 2. Монета была потрачена (исходящая)
+      // 2. Расчет времени для исходящей транзакции (трата монеты)
       if (record.spent) {
-        const sHeight = record.spent_block_index ?? record.spent_height ?? 0;
-        let sTimestamp = nowSeconds;
-        if (maxKnownHeight > 0 && sHeight > 0) {
-          sTimestamp = nowSeconds - Math.floor((maxKnownHeight - sHeight) * SECONDS_PER_BLOCK);
-        }
-
+        // Для потраченной монеты record.timestamp из ноды — это точнейшее время совершения транзакции.
         finalHistory.push({
           name: fallbackCoinId,
           to_address: address,
           amount: amountXch,
-          confirmed_at_time: sTimestamp,
+          confirmed_at_time: baseTimestamp,
           type: 2 
         });
       }
