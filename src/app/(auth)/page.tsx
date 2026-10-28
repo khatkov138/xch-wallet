@@ -21,7 +21,7 @@ import { PinCodeForm } from "./_components/PinCodeForm"
 import { AuthBackground } from "./_components/AuthBackground"
 import { WalletLayout } from "@/components/WalletLayout"
 
-import { encryptMnemonic } from "@/lib/crypto"
+import { encryptMnemonic, getContractAddress } from "@/lib/crypto"
 import { Card, CardContent } from "@/components/ui/card"
 
 const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут для сессии
@@ -93,6 +93,9 @@ export default function AuthPage() {
       const unhardened_wallet_pk = unhardened_wallet_sk.getG1()
       const unhardened_wallet_pk_hex = Buffer.from(unhardened_wallet_pk.toBytes()).toString('hex')
 
+      // Вычисляем адрес локально для логов аудита
+      const localAddress = getContractAddress(clearMnemonic)
+
       console.log("%c 🔑 [XCHA REGISTRATION CRYPTO AUDIT] ", "background: #B82EFF; color: white; font-weight: bold; padding: 4px; border-radius: 4px;")
       console.log(`1. Mnemonic: "${clearMnemonic}"`)
       console.log(`2. Master SK Hex: ${master_sk_hex}`)
@@ -101,10 +104,11 @@ export default function AuthPage() {
       console.log(`5. Farmer PK Hex: ${farmer_pk_hex}`)
       console.log(`6. Pool PK Hex: ${pool_pk_hex}`)
       console.log(`7. Wallet SK Hex (Hardened): ${wallet_sk_hex}`)
+      console.log(`8. Смарт-контракт (Локально): ${localAddress}`)
       console.log(`🚀 ИТОГОВЫЙ ПАБЛИК ДЛЯ ПИТОНА (Unhardened PK Hex): %c${unhardened_wallet_pk_hex}`, "color: #10B981; font-weight: bold; font-size: 11px;")
       console.log("%c ---------------------------------------------------- ", "color: #52525b;")
 
-      return unhardened_wallet_pk_hex
+      return localAddress
     } catch (e) {
       console.error("Ошибка при расчете ключей аудите регистрации:", e)
       return null
@@ -129,51 +133,30 @@ export default function AuthPage() {
       // 2. Устанавливаем время экспирации сессии (5 минут)
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
 
-      // 3. Запускаем аудит — он выведет все 7 строк и вернет unhardened_wallet_pk_hex
-      const unhardened_wallet_pk_hex = logCryptoAudit(phraseToEncrypt)
+      // 3. Запускаем аудит — рассчитываем адрес локально без сетевых запросов
+      const derivedAddress = logCryptoAudit(phraseToEncrypt)
 
-      if (!unhardened_wallet_pk_hex) {
-        throw new Error("Не удалось рассчитать публичный ключ кошелька")
+      if (!derivedAddress) {
+        throw new Error("Не удалось рассчитать адрес смарт-контракта")
       }
 
-      // 4. Отправляем этот ПУБЛИЧНЫЙ ключ на наш Next.js бэкенд
-      const response = await fetch("/api/chia/address", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ wallet_pk_hex: unhardened_wallet_pk_hex, index: 0 }),
-      })
+      console.log(`%c [XCHA AUTH SUCCESS] Кошелек успешно создан. Локальный адрес: ${derivedAddress}`, "color: #10B981; font-weight: bold;")
 
-      if (!response.ok) {
-        throw new Error(`Сервер вернул статус ${response.status} при создании адреса`)
-      }
-
-      const data = await response.json()
-      
-      if (data.status !== "success" || !data.address) {
-        throw new Error(data.message || "Ошибка генерации адреса внутри Python-скрипта")
-      }
-
-      const derivedAddress = data.address
-      console.log(`%c [XCHA AUTH SUCCESS] Кошелек успешно создан. Получен адрес: ${derivedAddress}`, "color: #10B981; font-weight: bold;")
-
-      // 5. Записываем в Zustand ТОЛЬКО правильный адрес
+      // 4. Записываем в Zustand локально вычисленный адрес кошелька
       setWalletData(derivedAddress, "")
 
-      // 6. Жесткое обнуление локальных стейтов
+      // 5. Жесткое обнуление локальных стейтов
       setPhraseToEncrypt("")
       setSeedPhrase("")
       setGeneratedPhrase("")
 
-      // 7. Переходим на дашборд
+      // 6. Переходим на дашборд
       router.push("/dashboard")
     } catch (err: any) {
       console.error("Криптографическая ошибка создания сейфа:", err)
       alert(`Ошибка при инициализации кошелька: ${err.message || err}`)
     }
   }
-
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 text-white font-sans antialiased overflow-hidden flex flex-col justify-between">
       <AuthBackground />

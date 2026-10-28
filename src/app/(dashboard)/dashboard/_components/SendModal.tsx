@@ -1,17 +1,13 @@
 import React, { useState } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
 
 interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const PYTHON_BACKEND_URL = "http://127.0.0.1:8000"
-
 export function SendModal({ isOpen, onClose }: SendModalProps) {
-  const { walletAddress, getUnhardenedPkHex, getUnhardenedSkHex } = useWalletAuth()
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
   const [customFeeMojo, setCustomFeeMojo] = useState("5000000")
@@ -28,95 +24,33 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
 
   const handleSendTransaction = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!targetAddress || !amount) return
-
-    const targetFeeMojo = parseInt(customFeeMojo) || 0
-    if (targetFeeMojo > 0 && targetFeeMojo < 5000000) {
-      setStatusMessage("❌ Укажите комиссию 0 или не менее 5 000 000 Mojo!")
-      return
-    }
+    if (!targetAddress) return
 
     setLoading(true)
     setStatusMessage("")
     setDebugJsonString("")
 
-    let dump: any = {
-      client_context: { wallet_address: walletAddress, target_address: targetAddress.trim(), amount_xch: amount, fee_mojo: targetFeeMojo },
-      step1_sent: null, step1_received: null,
-      step2_sent: null, step2_received: null,
-      step3_sent: null, step3_received: null,
-      step4_sent: null, step4_received: null
-    }
-
     try {
-      const amountMojo = Math.floor(parseFloat(amount) * 1_000_000_000_000)
+      setStatusMessage("⏳ Отправка запроса...")
 
-      const pk = getUnhardenedPkHex()
-      const sk = getUnhardenedSkHex()
-
-      // ИСПРАВЛЕНО: Красивое текстовое логирование перед отправкой для сверки с аудитом
-      console.log(
-        `%c🚀 [XCHA TX PRE-FLIGHT INSPECTOR]\n` +
-        `----------------------------------------\n` +
-        `🌍 Текущий адрес:       ${walletAddress}\n` +
-        `🔑 Canonical Wallet PK:  ${pk}\n` +
-        `🔒 Canonical Wallet SK:  ${sk ? `${sk.slice(0, 10)}...${sk.slice(-10)}` : "НЕТ КЛЮЧА"}\n` +
-        `📥 Куда отправляем:      ${targetAddress.trim()}\n` +
-        `💰 Сумма (Mojo):         ${amountMojo}\n` +
-        `⛽ Комиссия (Mojo):      ${targetFeeMojo}\n` +
-        `----------------------------------------`,
-        "color: #ff00ff; font-weight: bold; font-family: monospace;"
-      )
-
-      if (!pk || !sk) throw new Error("Ошибка context ключей — хук вернул пустые значения")
-
-      setStatusMessage("⏳ Отправка сквозного запроса 4-в-1 на бэкенд...")
-
-      const strictPayload = {
-        amount: amountMojo,
-        fee: targetFeeMojo
-      }
-
-      console.log(`📡 [API REQUEST] -> POST ${PYTHON_BACKEND_URL}/send-transaction`, strictPayload)
-
-      const response = await fetch(`${PYTHON_BACKEND_URL}/send-transaction`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(strictPayload) // Теперь летят только два чистых инта!
+      const response = await fetch(`/api/chia/send?address=${encodeURIComponent(targetAddress.trim())}`, {
+        method: "GET",
       })
 
       const result = await response.json()
 
-      if (result.debug_flow) {
-        dump.step1_sent = result.debug_flow.step1_sent
-        dump.step1_received = result.debug_flow.step1_received
-        dump.step2_sent = result.debug_flow.step2_sent
-        dump.step2_received = result.debug_flow.step2_received
-        dump.step3_sent = result.debug_flow.step3_sent
-        dump.step3_received = result.debug_flow.step3_received
-        dump.step4_sent = result.debug_flow.step4_sent
-        dump.step4_received = result.debug_flow.step4_received
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Не удалось отправить транзакцию")
       }
 
-      console.log(
-        `%c📥 [API RESPONSE] <- Status: ${response.status}\n` +
-        `📄 Data: ${JSON.stringify(result, null, 2)}`,
-        result.status === "success" ? "color: #10B981; font-family: monospace;" : "color: #EF4444; font-family: monospace;"
-      )
-
-      if (!response.ok || result.status !== "success") {
-        throw new Error(result.detail || result.error || "Мемпул ноды отклонил транзакцию")
-      }
-
-      setStatusMessage(`🎉 Успешно! Транзакция в мемпуле! ID: ${result.tx_id}`)
-      setDebugJsonString(JSON.stringify(dump, null, 2))
+      setStatusMessage("🎉 Успешно! Транзакция в мемпуле!")
     } catch (err: any) {
       setStatusMessage(`❌ Ошибка: ${err.message || err}`)
-      setDebugJsonString(JSON.stringify(dump, null, 2))
     } finally {
       setLoading(false)
     }
   }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl max-h-[95vh] overflow-y-auto">

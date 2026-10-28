@@ -1,194 +1,97 @@
-import { NextResponse } from "next/server"
-import fs from "fs"
-import path from "path"
-import https from "https"
-import os from "os"
-import { createApiResponse } from "@/lib/server-utils"
+import { NextResponse, NextRequest } from "next/server";
+import fs from "fs";
+import path from "path";
+import https from "https";
+import os from "os";
+import bip39 from "bip39";
+import chiaBls from "chia-bls";
+import { sha256 } from "@noble/hashes/sha2";
+import { bech32m } from "bech32";
+import { clvmTree, parseCLVMBytes, intToBytes, serializeSolution } from "@/lib/crypto";
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+const { PrivateKey, AugSchemeMPL } = chiaBls;
+const MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden";
+const MOJO_PER_XCH = 1_000_000_000_000n, MIN_FEE = 100_000_000n;
 
-interface ChiaRpcSendTransactionResult {
-  success: boolean;
-  transaction?: {
-    confirmed: boolean;
-    name: string;
-    amount: number | string;
-    spend_bundle?: any;
-  };
-  error?: string;
-}
-
-interface FullNodePushTxResult {
-  success: boolean;
-  status: string;
-  error?: string;
-}
-
-const MOJO_PER_XCH = 1000000000000n;
-
-const WALLET_DATA = {
-  fingerprint: 403921831,
-  address: "txch10jfgrn26fzdwcakzq8rs9cmhh3lzz9ctgp9dq82hrt5rg6djmfhqku7rmg"
+const toHex = (b: Uint8Array) => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
+const toBytes = (h: string) => {
+  const c = h.replace(/^0x|\s+/g, '').toLowerCase();
+  return new Uint8Array(c.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
 };
 
-/**
- * Высокоточная генерация случайной суммы в диапазоне [min, max]
- */
-function generateRandomMojoAmount(min: number, max: number): { xch: string; mojo: bigint } {
-  const randomXch = Math.random() * (max - min) + min;
-  const xchStr = randomXch.toFixed(12);
+export async function GET(request: NextRequest) {
+  try {
+    const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
 
-  const [integerPart, fractionalPart = ""] = xchStr.split(".");
-  const paddedFraction = fractionalPart.padEnd(12, "0").slice(0, 12);
+    // ДИНАМИЧЕСКИЙ АДРЕС ИЗ GET-ПАРАМЕТРОВ (?address=...)
+    const { searchParams } = request.nextUrl;
+    const TARGET_ADDRESS = searchParams.get("address");
 
-  const mojo = BigInt(integerPart) * MOJO_PER_XCH + BigInt(paddedFraction);
-
-  return { xch: xchStr, mojo };
-}
-
-export async function GET(request: Request): Promise<NextResponse> {
-  const { searchParams } = new URL(request.url);
-  const forceUpdate = searchParams.get("_t") || Date.now().toString();
-
-  console.log(`\n[CHIA DEBUG PIPELINE] ==========================================`)
-  console.log(`[CHIA DEBUG PIPELINE] [START] Рандомный amount от 0.011111 до 0.022222. Запрос: ${forceUpdate}`)
-
-  return createApiResponse<any>(async () => {
-    const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
-    const networkFolder = isTestnet ? "testnet11" : "mainnet"
-    const homeDir = process.env.USERPROFILE || os.homedir() || process.env.HOME || "C:\\Users\\khatk";
-
-    // 1. Настройка SSL для кошелька (Порт 9256)
-    let walletSslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "wallet")
-    let walletCert = path.join(walletSslPath, "private_wallet.crt")
-    let walletKey = path.join(walletSslPath, "private_wallet.key")
-
-    if (!fs.existsSync(walletCert)) {
-      walletSslPath = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\wallet`
-      walletCert = path.join(walletSslPath, "private_wallet.crt")
-      walletKey = path.join(walletSslPath, "private_wallet.key")
+    if (!TARGET_ADDRESS) {
+      return NextResponse.json({ success: false, error: "Missing required 'address' query parameter" }, { status: 400 });
     }
 
-    // 2. Настройка SSL для Full Node (Порт 8555) — подтягивается заранее
-    let nodeSslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "full_node")
-    let nodeCert = path.join(nodeSslPath, "private_full_node.crt")
-    let nodeKey = path.join(nodeSslPath, "private_full_node.key")
+    // СТРОГАЯ ПРОВЕРКА НАЛИЧИЯ КОНСТАНТ В ENV
+    const genesisHex = process.env.NEXT_PUBLIC_CHIA_GENESIS_CHALLENGE;
+    if (!genesisHex) {
+      throw new Error("NEXT_PUBLIC_CHIA_GENESIS_CHALLENGE missing from .env file");
+    }
+    const genesisChallenge = toBytes(genesisHex);
 
-    if (!fs.existsSync(nodeCert)) {
-      nodeSslPath = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node`
-      nodeCert = path.join(nodeSslPath, "private_full_node.crt")
-      nodeKey = path.join(nodeSslPath, "private_full_node.key")
+    const home = process.env.USERPROFILE || os.homedir() || "C:\\Users\\khatk";
+    let sP = path.join(home, ".chia", isTestnet ? "testnet11" : "mainnet", "config", "ssl", "full_node");
+    if (!fs.existsSync(path.join(sP, "private_full_node.crt"))) {
+      sP = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node`;
     }
 
-    if (!fs.existsSync(walletCert) || !fs.existsSync(nodeCert)) {
-      throw new Error(`SSL-сертификаты (кошелька или ноды) отсутствуют в системе.`)
-    }
+    const agent = new https.Agent({ cert: fs.readFileSync(path.join(sP, "private_full_node.crt")), key: fs.readFileSync(path.join(sP, "private_full_node.key")), rejectUnauthorized: false });
+    const rpc = async (p: string, b: any) => new Promise<any>((resolve) => {
+      const d = JSON.stringify(b || {});
+      const req = https.request(`https://localhost:8555${p}`, { method: "POST", agent, headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(d, "utf8") } }, (res) => {
+        const c: Buffer[] = []; res.on("data", (b) => c.push(b)); res.on("end", () => { try { resolve(JSON.parse(Buffer.concat(c).toString("utf8"))); } catch { resolve({ success: false }); } });
+      }); req.write(d); req.end();
+    });
 
-    const walletAgent = new https.Agent({ cert: fs.readFileSync(walletCert), key: fs.readFileSync(walletKey), rejectUnauthorized: false })
-    const nodeAgent = new https.Agent({ cert: fs.readFileSync(nodeCert), key: fs.readFileSync(nodeKey), rejectUnauthorized: false })
+    let sk = PrivateKey.fromSeed(bip39.mnemonicToSeedSync(MNEMONIC.trim()));
+    for (const p of [12381, 8444, 2, 0]) sk = AugSchemeMPL.deriveChildSk(sk, p);
+    const pB = sk.getG1().toBytes();
 
-    // Генерируем случайную сумму строго в диапазоне от 0.011111 до 0.022222 XCH
-    const { mojo: randomMojo } = generateRandomMojoAmount(0.011111, 0.022222);
+    const cB = toBytes(process.env.NEXT_PUBLIC_CONTRACT_HEX || "");
+    const pfx = toBytes("ff02ffff01"), mid = toBytes("ffff04ffff01b0"), sfx = toBytes("ff018080");
+    const fullReveal = new Uint8Array(pfx.length + cB.length + mid.length + pB.length + sfx.length);
+    fullReveal.set(pfx, 0); fullReveal.set(cB, pfx.length); fullReveal.set(mid, pfx.length + cB.length); fullReveal.set(pB, pfx.length + cB.length + mid.length); fullReveal.set(sfx, fullReveal.length - sfx.length);
 
-    // Стабильная фиксированная комиссия (0.0001 TXCH)
-    const stableFee = 100000000;
+    const contractPuzzleHash = clvmTree(parseCLVMBytes(fullReveal).node);
+    const coinsRes = await rpc("/get_coin_records_by_puzzle_hash", { puzzle_hash: "0x" + toHex(contractPuzzleHash), include_spent_coins: false });
+    const validCoin = coinsRes.coin_records?.find((r: any) => !r.spent);
+    if (!validCoin) return NextResponse.json({ success: false, error: "No coins found" });
 
-    // Логин в кошелек
-    const logInPayload = JSON.stringify({ fingerprint: WALLET_DATA.fingerprint })
-    await new Promise<void>((resolve) => {
-      const req = https.request("https://localhost:9256/log_in", { method: "POST", headers: { "Content-Type": "application/json" }, agent: walletAgent, timeout: 5000 }, (res) => {
-        res.on("data", () => { })
-        res.on("end", () => resolve())
-      })
-      req.on("error", () => resolve())
-      req.write(logInPayload)
-      req.end()
-    })
+    const coinAmount = BigInt(validCoin.coin.amount);
+    let sendAmount = BigInt(Math.floor((Math.random() * (0.022220 - 0.011111) + 0.011111) * Number(MOJO_PER_XCH)));
+    if (sendAmount > coinAmount - MIN_FEE) sendAmount = coinAmount - MIN_FEE;
+    const changeAmount = coinAmount - sendAmount - MIN_FEE;
 
-    // Запрос бандла у кошелька с рандомным amount и стабильным fee
-    const walletPayload = JSON.stringify({
-      wallet_id: 1,
-      address: WALLET_DATA.address,
-      amount: Number(randomMojo),
-      fee: stableFee,
-      push: false // Безопасный режим дебага
-    })
+    const tPh = new Uint8Array(bech32m.fromWords(bech32m.decode(TARGET_ADDRESS).words));
+    const { solutionHex, conditionsHash } = serializeSolution(tPh, sendAmount, contractPuzzleHash, changeAmount);
 
-    const walletResponseData = await new Promise<ChiaRpcSendTransactionResult>((resolve, reject) => {
-      const req = https.request(
-        "https://localhost:9256/send_transaction",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          agent: walletAgent,
-          timeout: 15000
-        },
-        (res) => {
-          const chunks: Buffer[] = []
-          res.on("data", (chunk: Buffer) => chunks.push(chunk))
-          res.on("end", () => {
-            try {
-              resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as ChiaRpcSendTransactionResult)
-            } catch {
-              reject(new Error("Ошибка парсинга JSON ответа от Wallet RPC"))
-            }
-          })
-        }
-      )
-      req.on("error", reject)
-      req.write(walletPayload)
-      req.end()
-    })
+    const pBuf = toBytes(validCoin.coin.parent_coin_info), aBuf = intToBytes(coinAmount);
+    const cIdBuf = new Uint8Array(pBuf.length + contractPuzzleHash.length + aBuf.length);
+    cIdBuf.set(pBuf, 0); cIdBuf.set(contractPuzzleHash, pBuf.length); cIdBuf.set(aBuf, pBuf.length + contractPuzzleHash.length);
+    const coinId = sha256(cIdBuf);
 
-    if (!walletResponseData.success || !walletResponseData.transaction?.spend_bundle) {
-      throw new Error(walletResponseData.error || "Не удалось перехватить SpendBundle.")
-    }
+    const msg = new Uint8Array(conditionsHash.length + coinId.length + genesisChallenge.length);
+    msg.set(conditionsHash, 0); msg.set(coinId, conditionsHash.length); msg.set(genesisChallenge, conditionsHash.length + coinId.length);
 
-    const targetSpendBundle = walletResponseData.transaction.spend_bundle;
-    console.log(`[CHIA DEBUG PIPELINE] [WALLET SUCCESS] Уникальный SpendBundle успешно перехвачен.`)
+    const result = await rpc("/push_tx", {
+      spend_bundle: {
+        coin_spends: [{
+          coin: { amount: Number(coinAmount), parent_coin_info: validCoin.coin.parent_coin_info, puzzle_hash: "0x" + toHex(contractPuzzleHash) },
+          puzzle_reveal: "0x" + toHex(fullReveal), solution: "0x" + solutionHex
+        }],
+        aggregated_signature: "0x" + toHex(AugSchemeMPL.sign(sk, msg).toBytes())
+      }
+    });
 
-    // -------------------------------------------------------------------------
-    // ШАГ ДЛЯ ПРОВЕРКИ: ОТПРАВКА БАНДЛА НАПРЯМУЮ В FULL NODE RPC (ЗАКОММЕНТИРОВАНО)
-    // -------------------------------------------------------------------------
-
-    const nodePayload = JSON.stringify({ spend_bundle: targetSpendBundle })
-    console.log(`[CHIA DEBUG PIPELINE] [FULL NODE] Отправка бандла на https://localhost:8555/push_tx`)
-
-    const nodeResponseData = await new Promise<FullNodePushTxResult>((resolve, reject) => {
-      const req = https.request(
-        "https://localhost:8555/push_tx",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(nodePayload, "utf8")
-          },
-          agent: nodeAgent,
-          timeout: 15000
-        },
-        (res) => {
-          const chunks: Buffer[] = []
-          res.on("data", (chunk: Buffer) => chunks.push(chunk))
-          res.on("end", () => {
-            try {
-              resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as FullNodePushTxResult)
-            } catch {
-              reject(new Error("Не удалось распарсить ответ от Full Node RPC"))
-            }
-          })
-        }
-      )
-      req.on("error", reject)
-      req.write(nodePayload)
-      req.end()
-    })
-
-    console.log(`[CHIA DEBUG PIPELINE] [FULL NODE RESPONSE]`, nodeResponseData)
-    // Если захочешь вернуть ответ ноды вместо голого бандла, раскомментируй строку ниже:
-    return nodeResponseData;
-
-
-    // Выплёвываем ТОЛЬКО чистый spend_bundle
-    return targetSpendBundle;
-  })
+    return NextResponse.json({ success: result.success, node_response: result });
+  } catch (e: any) { return NextResponse.json({ success: false, error: e.message || String(e) }, { status: 500 }); }
 }

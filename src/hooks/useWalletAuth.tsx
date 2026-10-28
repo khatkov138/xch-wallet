@@ -33,7 +33,6 @@ export function useWalletAuth() {
     }
   }, [decryptedPhrase])
 
-  // ИСПРАВЛЕНО: Безопасно забираем уже вычисленный SK напрямую из JSON аудита без падений
   const getUnhardenedSkHex = useCallback((): string | null => {
     if (!decryptedPhrase) return null
     const auditJson = runCryptoAudit(decryptedPhrase)
@@ -63,41 +62,20 @@ export function useWalletAuth() {
         `🌊 Pool PK Hex:         ${auditData.pool_pk_hex}\n` +
         `🔒 Canonical Wallet SK: ${auditData.wallet_sk_hardened_hex} (Используем для Шага 3)\n` +
         `🚀 Canonical Wallet PK: ${auditData.unhardened_wallet_pk_hex} (Отправляем на бэкенд)\n` +
+        `🏠 Смарт-контракт:      ${auditData.contract_address} (Рассчитан локально)\n` +
         `----------------------------------------`,
         "color: #8B5CF6; font-weight: bold; font-family: monospace;"
       )
 
-      const walletPublicKeyHex = auditData.unhardened_wallet_pk_hex
-      if (!walletPublicKeyHex) throw new Error("Unhardened PK отсутствует в результатах")
-
-      console.log(
-        `%c📡 [API REQUEST] -> POST /api/chia/address\n` +
-        `📦 Payload: { wallet_pk_hex: "${walletPublicKeyHex}" }`,
-        "color: #3B82F6; font-family: monospace;"
-      )
-
-      const response = await fetch("/api/chia/address", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet_pk_hex: walletPublicKeyHex }),
-      })
-
-      if (!response.ok) throw new Error(`HTTP Error ${response.status}`)
-      const data = await response.json()
-
-      console.log(
-        `%c📥 [API RESPONSE] <- Status: ${response.status}\n` +
-        `📄 Data: ${JSON.stringify(data, null, 2)}`,
-        data.status === "success" ? "color: #10B981; font-family: monospace;" : "color: #EF4444; font-family: monospace;"
-      )
-
-      if (data.status !== "success" || !data.address) throw new Error(data.message || "Bad response")
+      const targetAddress = auditData.contract_address
+      if (!targetAddress) throw new Error("Адрес смарт-контракта отсутствует в результатах аудита")
 
       if (typeof window !== 'undefined') {
         sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       }
 
-      setWalletData(data.address, clearMnemonic.trim())
+      // Записываем локально вычисленный адрес и фразу в стейт без сетевых запросов
+      setWalletData(targetAddress, clearMnemonic.trim())
       setScreenLocked(false)
 
     } catch (error: any) {
