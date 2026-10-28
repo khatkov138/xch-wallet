@@ -4,16 +4,11 @@ import React from "react"
 import { RefreshCw } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { handleApi } from "@/lib/utils"
-import { BalanceData } from "@/app/types/chia"
+import { useWalletAuth } from "@/hooks/useWalletAuth"
 
-interface BalanceSectionProps {
-  currentAddress: string
-}
+interface IndexRecord { index: number; puzzle_hash: string; xch: string; mojo: string; coins: any[]; }
+interface MultiIndexBalanceData { total_xch: string; total_mojo: string; addresses: IndexRecord[]; }
 
-/**
- * Безопасно форматирует строковый баланс XCH до нужного количества знаков после запятой
- * без потери точности больших чисел и без использования небезопасного .toFixed()
- */
 function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
   if (!str.includes(".")) {
@@ -23,29 +18,28 @@ function formatStringBalance(xchString: string | number, decimals: number = 4): 
   const [integerPart, fractionalPart] = str.split(".");
   const truncatedFraction = fractionalPart.slice(0, decimals);
   
-  // Добираем нули, если дробная часть оказалась короче требуемых знаков
   const paddedFraction = truncatedFraction.padEnd(decimals, "0");
   
   return `${integerPart}.${paddedFraction}`;
 }
 
-export function BalanceSection({ currentAddress }: BalanceSectionProps) {
-  // Запрос баланса живет прямо внутри компонента
-  const { data: balanceData, error: balanceError, refetch, isFetching } = useQuery<BalanceData>({
-    queryKey: ['walletBalance', currentAddress],
-    queryFn: () => handleApi<BalanceData>(fetch(`/api/chia/balance?address=${currentAddress}`)),
-    enabled: !!currentAddress,
-    refetchInterval: 10000, // Поллинг баланса каждые 10 секунд
+export function BalanceSection() {
+  // Достаем метод получения публичного ключа кошелька прямо из твоего хука авторизации
+  const { getUnhardenedPkHex } = useWalletAuth()
+  const walletPublicKeyHex = getUnhardenedPkHex()
+
+  const { data: balanceData, error: balanceError, refetch, isFetching } = useQuery<MultiIndexBalanceData>({
+    queryKey: ['walletBalance', walletPublicKeyHex],
+    queryFn: () => handleApi<MultiIndexBalanceData>(fetch(`/api/wallet/balance?publicKeyHex=${walletPublicKeyHex}`)),
+    enabled: !!walletPublicKeyHex,
+    refetchInterval: 10000,
     staleTime: 5000,
   })
 
-  // Бэкенд теперь возвращает строку ("string"), подстраховываемся дефолтной строкой "0"
-  const realXCHStr = balanceData?.xch ?? "0"
+  const realXCHStr = balanceData?.total_xch ?? "0"
 
-  // УМНАЯ СТАТИЧЕСКАЯ МАСКИРОВКА ОШИБКИ ВНУТРИ КОМПОНЕНТА
   const balanceXCH = balanceError ? "0.0000" : formatStringBalance(realXCHStr, 4)
   
-  // Для фиатного баланса конвертация в Number допустима, так как центы не требуют криптографической точности Chia
   const numericXCH = Number(realXCHStr)
   const balanceUSD = balanceError
     ? "⚠️ Ошибка: не удалось связаться с сервером"

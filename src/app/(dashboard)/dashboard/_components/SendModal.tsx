@@ -5,6 +5,7 @@ import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import chiaBls from "chia-bls"
+import { PrepareSchema } from "@/lib/validations/coin"
 
 const { PrivateKey, AugSchemeMPL } = chiaBls;
 
@@ -25,7 +26,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
 
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
-  const [amount, setAmount] = useState("")
+  const [amount, setAmount] = useState("") // Сюда юзер пишет человеческие XCH (например: 1 или 0.15)
   const [customFeeMojo, setCustomFeeMojo] = useState("5000000")
   const [loading, setLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState("")
@@ -41,18 +42,48 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
 
   const handlePrepareCoinSpend = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!targetAddress || !decryptedPhrase) return
+    if (!targetAddress || !amount || !decryptedPhrase) return
 
     setLoading(true)
     setStatusMessage("")
     setDebugJsonString("")
 
     try {
-      setStatusMessage("⏳ Поиск монет на контракте и генерация структуры трат...")
       const walletPublicKeyHex = getUnhardenedPkHex()
       if (!walletPublicKeyHex) throw new Error("Не удалось получить публичный ключ кошелька из сессии")
 
-      const response = await fetch("/api/coin/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: targetAddress.trim(), publicKeyHex: walletPublicKeyHex }) })
+      // Переводим введенную строку XCH (например, "1") в число с плавающей точкой
+      const xchAmount = parseFloat(amount.trim().replace(",", "."))
+      if (isNaN(xchAmount) || xchAmount <= 0) {
+        throw new Error("Введите корректную сумму отправки")
+      }
+
+      // Конвертируем XCH в чистые mojo для отправки на бэк
+      const mojoAmount = Math.round(xchAmount * 1_000_000_000_000)
+
+      const payload = {
+        address: targetAddress.trim(),
+        publicKeyHex: walletPublicKeyHex,
+        amount: mojoAmount.toString(), // Теперь уходит строка без точек (например, "1000000000000")
+        minFee: customFeeMojo.trim() || "0",
+      }
+
+      // 🔐 Локальная валидация перед отправкой на бэк
+      const localValidation = PrepareSchema.safeParse(payload);
+      if (!localValidation.success) {
+        const errors = localValidation.error.flatten().fieldErrors;
+        const firstError = Object.values(errors)[0]?.[0] || "Ошибка валидации данных";
+        throw new Error(firstError);
+      }
+
+      setStatusMessage("⏳ Поиск монет на контракте и генерация структуры трат...")
+
+      const response = await fetch("/api/coin/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+
       const result = await response.json()
       setDebugJsonString(JSON.stringify(result, null, 2))
 
@@ -66,6 +97,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
       setLoading(false)
     }
   }
+
   const handleSignAndSubmit = async () => {
     if (!preparedSpendData || !preparedSpendData.msgHex) return;
 
@@ -75,26 +107,19 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
     try {
       setStatusMessage("🔐 Локальное подписание контракта приватным ключом...");
 
-      // 1. Получаем HEX приватного ключа из твоего хука ( wallet_sk_hardened_hex )
       const walletPrivateKeyHex = getUnhardenedSkHex();
       if (!walletPrivateKeyHex) throw new Error("Приватный ключ недоступен. Возможно, экран заблокирован");
 
-      // 2. Инициализируем приватный ключ BLS из HEX-байтов (в роуте было PrivateKey.fromSeed)
       const sk = PrivateKey.fromBytes(toBytes(walletPrivateKeyHex));
-
-      // 3. Переводим msgHex от бэкенда обратно в байты Uint8Array
       const msgBytes = toBytes(preparedSpendData.msgHex);
 
-      // 4. Подписываем сообщение точно так же, как это делалось в роуте
       const signature = AugSchemeMPL.sign(sk, msgBytes);
       const aggregatedSignatureHex = "0x" + toHex(signature.toBytes());
 
-      // 5. Упаковываем coinSpend из бэкенда и нашу подпись в SpendBundle
       const spendBundle = { coin_spends: [preparedSpendData.coinSpend], aggregated_signature: aggregatedSignatureHex };
       setDebugJsonString(JSON.stringify({ message: "Сформирован SpendBundle", spend_bundle: spendBundle }, null, 2));
       setStatusMessage("🚀 Контракт подписан локально! Отправка пакета трат в сеть...");
 
-      // 6. Отправляем готовый SpendBundle на эндпоинт отправки
       const submitResponse = await fetch("/api/coin/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spend_bundle: spendBundle }) });
       const submitResult = await submitResponse.json();
       setDebugJsonString(JSON.stringify(submitResult, null, 2));

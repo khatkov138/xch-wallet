@@ -5,17 +5,19 @@ import { ArrowUpRight, ArrowDownLeft, Layers } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useQuery } from "@tanstack/react-query"
 import { handleApi } from "@/lib/utils"
+import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { CleanTransaction, formatAddress, formatDate } from "@/app/types/chia"
 
-interface ActivityListProps {
-  currentAddress: string;
-}
+export function ActivityList() {
+  // Достаем метод получения публичного ключа кошелька прямо из твоего хука авторизации
+  const { getUnhardenedPkHex } = useWalletAuth()
+  const walletPublicKeyHex = getUnhardenedPkHex()
 
-export function ActivityList({ currentAddress }: ActivityListProps) {
+  // Запрашиваем сквозную историю транзакций по публичному ключу для всех 100 индексов сразу
   const { data: transactions = [] } = useQuery<CleanTransaction[]>({
-    queryKey: ['walletTransactions', currentAddress],
-    queryFn: () => handleApi<CleanTransaction[]>(fetch(`/api/chia/transactions?address=${currentAddress}`)),
-    enabled: !!currentAddress,
+    queryKey: ['walletTransactions', walletPublicKeyHex],
+    queryFn: () => handleApi<CleanTransaction[]>(fetch(`/api/wallet/transactions?publicKeyHex=${walletPublicKeyHex}`)),
+    enabled: !!walletPublicKeyHex,
     refetchInterval: 10000,
     staleTime: 5000,
   })
@@ -28,9 +30,6 @@ export function ActivityList({ currentAddress }: ActivityListProps) {
       </div>
 
       <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
-        {/* max-h-[350px] ограничивает высоту (можешь поменять на нужную), 
-            overflow-y-auto включает скролл, 
-            а scrollbar-thin делает его тоньше в поддерживаемых браузерах */}
         <CardContent className="p-2 space-y-1 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
           {transactions.length === 0 ? (
             <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
@@ -41,8 +40,6 @@ export function ActivityList({ currentAddress }: ActivityListProps) {
               const isIncoming = tx.type === 1
               const formattedAmount = tx.amount
 
-              // ЖЕЛЕЗОБЕТОННЫЙ КЛЮЧ: имя + тип + индекс + время. 
-              // React никогда больше не выдаст ошибку неуникального ключа.
               const uniqueKey = `${tx.name || 'tx'}_${tx.type}_${index}_${tx.confirmed_at_time}`;
 
               return (
