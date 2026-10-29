@@ -20,7 +20,6 @@ export default function DashboardPage() {
 
   // ⚡ ВЕСЬ КОНТЕКСТ ИДЕТ СТРОГО ИЗ ОДНОГО ХУКА
   const {
-    walletAddress,
     isVerifying,
     isScreenLocked,
   } = useWalletAuth()
@@ -63,7 +62,7 @@ export default function DashboardPage() {
           <BalanceSection />
 
           {/* Презентационные компоненты просто получают готовую строку адреса */}
-          <AddressCard address={walletAddress} />
+          <AddressCard />
 
           <ActionButtons
             onReceiveClick={() => setIsReceiveOpen(true)}
@@ -71,7 +70,7 @@ export default function DashboardPage() {
           />
 
           <ActivityList />
-          <BackupCard walletAddress={walletAddress} />
+          <BackupCard />
         </div>
       </WalletLayout>
 
@@ -79,7 +78,7 @@ export default function DashboardPage() {
       <ReceiveModal
         isOpen={isReceiveOpen}
         onClose={() => setIsReceiveOpen(false)}
-        walletAddress={walletAddress}
+
       />
 
       <SendModal

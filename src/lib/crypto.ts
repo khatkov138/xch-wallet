@@ -1,20 +1,24 @@
 import bip39 from 'bip39';
 import chiaBls from 'chia-bls';
 import { sha256 } from '@noble/hashes/sha2';
+// 🔥 Импортируем наш валидированный конфиг (поправь путь, если crypto.ts лежит в другом месте)
+import { env } from "@/env";
 
-// === КОНСТАНТЫ ИЗ ОКРУЖЕНИЯ .ENV ===
-const CONTRACT_HEX = process.env.NEXT_PUBLIC_CONTRACT_HEX || "";
-const CHIA_PORT = parseInt(process.env.NEXT_PUBLIC_CHIA_PORT || "12381", 10);
-const CHIA_COIN = parseInt(process.env.NEXT_PUBLIC_CHIA_COIN || "8444", 10);
-const CHARSET = process.env.NEXT_PUBLIC_CHIA_CHARSET || "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-const GROUP_ORDER = BigInt(process.env.NEXT_PUBLIC_CHIA_GROUP_ORDER || "0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
-const DEFAULT_HIDDEN_PUZZLE_HASH = process.env.NEXT_PUBLIC_CHIA_HIDDEN_PUZZLE_HASH || "711d6c4e32c92e53179b1994a5288a2da05bde7851007a413da9f27dda2c8ceb";
+// === КОНСТАНТЫ ИЗ ОКРУЖЕНИЯ (ВАЛИДИРОВАНЫ ЧЕРЕЗ ZOD) ===
+const CONTRACT_HEX = env.NEXT_PUBLIC_CONTRACT_HEX.trim();
+const CHIA_PORT = env.NEXT_PUBLIC_CHIA_PORT; // Уже number!
+const CHIA_COIN = env.NEXT_PUBLIC_CHIA_COIN; // Уже number!
+const CHARSET = env.NEXT_PUBLIC_CHIA_CHARSET;
+const GROUP_ORDER = BigInt(env.NEXT_PUBLIC_CHIA_GROUP_ORDER);
+const DEFAULT_HIDDEN_PUZZLE_HASH = env.NEXT_PUBLIC_CHIA_HIDDEN_PUZZLE_HASH.trim();
 
 // Параметры для защиты от брутфорса
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 16;
 
 const { PrivateKey, AugSchemeMPL } = chiaBls;
+
+
 
 const bytesToHex = (b: Uint8Array): string => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
 const hexToBytes = (h: string): Uint8Array => {
@@ -69,42 +73,42 @@ export async function decryptMnemonic(ed: string, pin: string): Promise<string> 
   // 1. Парсим hex в байты
   if (!/^[0-9a-fA-F\s]+$/.test(ed)) throw new Error("Данные должны быть в формате Hex");
   const b = hexToBytes(ed);
-  
+
   if (b.length < SALT_LENGTH + 12) throw new Error("Некорректный формат зашифрованных данных");
 
   // 2. Нарезаем строго по фиксированным координатам (16 байт соль, 12 байт IV)
   const salt = b.slice(0, 16);
   const iv = b.slice(16, 28);
-  
+
   // Создаем изолированный буфер для шифротекста (начиная с 28 байта)
   const data = new Uint8Array(b.length - 28);
   data.set(b.subarray(28));
 
   // 3. Импорт и деривация ключа
   const baseKey = await crypto.subtle.importKey(
-    "raw", 
-    new TextEncoder().encode(pin), 
-    { name: "PBKDF2" }, 
-    false, 
+    "raw",
+    new TextEncoder().encode(pin),
+    { name: "PBKDF2" },
+    false,
     ["deriveKey"]
   );
 
   const aesKey = await crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
-    baseKey, 
-    { name: "AES-GCM", length: 256 }, 
-    false, 
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
     ["decrypt"]
   );
 
   // 4. Дешифрование
   try {
     const decryptedBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv }, 
-      aesKey, 
+      { name: "AES-GCM", iv },
+      aesKey,
       data
     );
-    
+
     return new TextDecoder().decode(decryptedBuffer);
   } catch (err) {
     console.error("Криптографический сбой при дешифровании:", err);
@@ -122,23 +126,52 @@ export function deriveSyntheticSk(uSk: any, uPk: any): any {
 }
 
 export interface CryptoAuditResult {
-  mnemonic: string; master_sk_hex: string; master_pk_hex: string; fingerprint: number;
-  farmer_pk_hex: string; pool_pk_hex: string; wallet_sk_hardened_hex: string; unhardened_wallet_pk_hex: string;
-  contract_address: string;
+  mnemonic: string;
+  master_sk_hex: string;
+  master_pk_hex: string;
+  fingerprint: number;
+  farmer_pk_hex: string;
+  pool_pk_hex: string;
+  wallet_sk_hardened_hex: string;
+  // 🔥 Добавлено в интерфейс для типизации:
+  wallet_sk_unhardened_master_hex: string;
+  unhardened_wallet_pk_hex: string;
 }
 
 export function runCryptoAudit(cm: string): string | null {
   try {
-    const trimmed = cm.trim(), seed = bip39.mnemonicToSeedSync(trimmed), mSk = PrivateKey.fromSeed(seed);
-    const wSk = derivePath(mSk, [CHIA_PORT, CHIA_COIN, 2, 0]);
-    return JSON.stringify({
-      mnemonic: trimmed, master_sk_hex: mSk.toHex(), master_pk_hex: mSk.getG1().toHex(), fingerprint: mSk.getG1().getFingerprint(),
-      farmer_pk_hex: derivePath(mSk, [CHIA_PORT, CHIA_COIN, 0, 0]).getG1().toHex(), pool_pk_hex: derivePath(mSk, [CHIA_PORT, CHIA_COIN, 1, 0]).getG1().toHex(),
-      wallet_sk_hardened_hex: wSk.toHex(), unhardened_wallet_pk_hex: bytesToHex(wSk.getG1().toBytes()),
-      contract_address: getContractAddressByIndex(trimmed, 0).address // дефолтный 1ый адрес
-    });
-  } catch (e) { return null; }
+    const trimmed = cm.trim();
+    const seed = bip39.mnemonicToSeedSync(trimmed);
+    const mSk = PrivateKey.fromSeed(seed);
+
+    // Ветка 2 (Hardened)
+    const wSk2 = derivePath(mSk, [CHIA_PORT, CHIA_COIN, 2, 0]);
+    // Ветка 3 (Unhardened Мастер)
+    const wSk3 = derivePath(mSk, [CHIA_PORT, CHIA_COIN, 3, 0]);
+
+    const auditObj: CryptoAuditResult = {
+      mnemonic: trimmed,
+      master_sk_hex: mSk.toHex(),
+      master_pk_hex: mSk.getG1().toHex(),
+      fingerprint: mSk.getG1().getFingerprint(),
+      farmer_pk_hex: derivePath(mSk, [CHIA_PORT, CHIA_COIN, 0, 0]).getG1().toHex(),
+      pool_pk_hex: derivePath(mSk, [CHIA_PORT, CHIA_COIN, 1, 0]).getG1().toHex(),
+
+      wallet_sk_hardened_hex: wSk2.toHex(),
+      // Теперь TypeScript доволен:
+      wallet_sk_unhardened_master_hex: wSk3.toHex(),
+      unhardened_wallet_pk_hex: bytesToHex(wSk3.getG1().toBytes())
+    };
+
+    const result = JSON.stringify(auditObj);
+    console.log('runCryptoAudit', result);
+    return result;
+  } catch (e) {
+    return null;
+  }
 }
+
+
 
 function convertbits(d: number[], from: number, to: number, pad: boolean): number[] | null {
   let acc = 0, bits = 0; const r: number[] = [], maxv = (1 << to) - 1, max_acc = (1 << (from + to - 1)) - 1;
@@ -186,16 +219,25 @@ export function parseCLVMBytes(bytes: Uint8Array, offset = 0): { node: CLVMNode;
   return { node: { isAtom: true, atom: bytes.slice(atomOffset, atomOffset + len) }, nextOffset: atomOffset + len };
 }
 
-export function getContractAddressByIndex(mnemonic: string, index: number, prefix?: string): { puzzleHash: string, address: string } {
-  
+export function getContractAddressByPublicKey(
+  unhardenedWalletPkHex: string,
+  index: number,
+  prefix?: string
+): { puzzleHash: string, address: string } {
+
   if (!CONTRACT_HEX) throw new Error("NEXT_PUBLIC_CONTRACT_HEX missing");
   const pfx = prefix || "txch";
 
-  // 1. ДЕРИВАЦИЯ КЛЮЧА С УЧЕТОМ ИНДЕКСА (m/12381/8444/2/index)
-  const seed = bip39.mnemonicToSeedSync(mnemonic.trim());
-  const masterSk = PrivateKey.fromSeed(seed);
-  const wSk = derivePath(masterSk, [CHIA_PORT, CHIA_COIN, 2, index]); // <-- Используем index вместо 0
-  const pB = wSk.getG1().toBytes();
+  // 1. ДЕРИВАЦИЯ ПУБЛИЧНОГО КЛЮЧА ИЗ HEX (БЕЗ МНЕМОНИКИ)
+  // Восстанавливаем объект JacobianPoint (публичный ключ) из hex-строки стора
+  // Передаем false вторым аргументом, так как это публичный ключ G1
+  const masterWalletPk = chiaBls.JacobianPoint.fromHex(unhardenedWalletPkHex.trim(), false);
+
+  // Деривируем дочерний публичный ключ по индексу (unhardened-метод библиотеки)
+  // Вместо deriveChildPkUncompressed пишем правильный метод из твоей либы:
+  const childPk = AugSchemeMPL.deriveChildPkUnhardened(masterWalletPk, index);
+
+  const pB = childPk.toBytes();
 
   // Читаем чистый хекс контракта
   const cB = hexToBytes(CONTRACT_HEX.trim());

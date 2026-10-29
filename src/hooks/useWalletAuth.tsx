@@ -4,15 +4,15 @@ import { useEffect, useCallback, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useWalletStore } from "@/store/useWalletStore"
 import { runCryptoAudit, decryptMnemonic } from "@/lib/crypto"
+import chiaBls from 'chia-bls';
 
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
-
+//const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
+const INACTIVITY_TIMEOUT = 10 * 1000 // 10sec
 export function useWalletAuth() {
   const router = useRouter()
   const pathname = usePathname()
 
   const {
-    walletAddress,
     unhardenedPkHex,
     isScreenLocked,
     isVerifying,
@@ -33,31 +33,39 @@ export function useWalletAuth() {
   /**
    * 🔑 Получение приватного ключа по ПИН-коду "на лету" для подписи транзакций
    */
-  const getSkHexByPin = useCallback(async (pin: string): Promise<string> => {
+  /**
+   * 🔑 Получение приватного ключа по ПИН-коду "на лету" с авто-деривацией индекса
+   */
+  const getSkHexByPin = useCallback(async (pin: string, branch: 2 | 3 = 3, index: number = 0): Promise<string> => {
     if (typeof window === 'undefined') throw new Error("Среда выполнения не определена")
-
     const encryptedMnemonic = localStorage.getItem("xcha_mnemonic")
-    // Проверка на случай, если localStorage еще содержит флаг 'true' вместо зашифрованной строки
-    if (!encryptedMnemonic || encryptedMnemonic === "true") {
-      throw new Error("Кошелек не зашифрован или не найден в хранилище")
-    }
+    if (!encryptedMnemonic || encryptedMnemonic === "true") throw new Error("Кошелек не найден")
 
     try {
-      // 1. Расшифровываем мнемонику с помощью введенного ПИН-кода
       const clearMnemonic = await decryptMnemonic(encryptedMnemonic, pin)
-
-      // 2. Запускаем аудит для получения дерева ключей
       const auditJson = runCryptoAudit(clearMnemonic)
-      if (!auditJson) throw new Error("Не удалось恢复ключи")
-
+      if (!auditJson) throw new Error("Не удалось восстановить ключи")
       const auditData = JSON.parse(auditJson)
 
-      // Возвращаем hardened приватный ключ кошелька для подписи
-      return auditData.wallet_sk_hardened_hex
+      // 1. Если запрошена старая hardened-ветка 2 (например, для обычных транзакций)
+      if (branch === 2) {
+        return auditData.wallet_sk_hardened_hex
+      }
+
+      // 2. Если нужна unhardened-ветка 3 (для наших смарт-контрактов)
+      // Восстанавливаем мастер-приватник 3-й ветки, который добавили в runCryptoAudit
+      const masterSk3 = chiaBls.PrivateKey.fromHex(auditData.wallet_sk_unhardened_master_hex)
+
+      // Деривируем дочерний ключ для конкретной монеты по её индексу
+      const childSk = chiaBls.AugSchemeMPL.deriveChildSkUnhardened(masterSk3, index)
+
+      return childSk.toHex()
     } catch (error) {
-      throw new Error("Неверный ПИН-код или поврежденные данные")
+      console.error(error)
+      throw new Error("Неверный ПИН-код или ошибка деривации")
     }
   }, [])
+
 
   /**
    * 🎉 Централизованный метод успешного входа (вызывается из EncryptPhraseForm или формы разблокировки)
@@ -73,7 +81,7 @@ export function useWalletAuth() {
       }
 
       // Записываем только публичные данные в Zustand (Приватный ключ НЕ храним в памяти!)
-      setWalletData(auditData.contract_address, auditData.unhardened_wallet_pk_hex)
+      setWalletData(auditData.unhardened_wallet_pk_hex)
       setScreenLocked(false)
     } catch (error) {
       console.error("❌ Ошибка авторизации:", error)
@@ -140,7 +148,7 @@ export function useWalletAuth() {
     const sessionExpires = sessionStorage.getItem("xcha_session_expires")
     const isSessionValid = sessionExpires && Date.now() < parseInt(sessionExpires, 10)
 
-    if (isSessionValid && walletAddress && unhardenedPkHex) {
+    if (isSessionValid && unhardenedPkHex) {
       setScreenLocked(false)
     } else {
       // Сессия истекла или данных нет в Zustand -> включаем экран блокировки ПИН-кодом
@@ -148,7 +156,7 @@ export function useWalletAuth() {
     }
 
     setVerifying(false)
-  }, [pathname, walletAddress, unhardenedPkHex, lockWallet, setScreenLocked, setVerifying, router])
+  }, [pathname, unhardenedPkHex, lockWallet, setScreenLocked, setVerifying, router])
 
   /**
    * ⏱ ЭФФЕКТ 2: Таймер автоблокировки по неактивности пользователя
@@ -181,10 +189,10 @@ export function useWalletAuth() {
     }
   }, [isVerifying, isScreenLocked, pathname, lockWallet])
 
-  
+
 
   return {
-    walletAddress,
+
     isVerifying,
     isScreenLocked,
     handleUnlockSuccess, // На месте для EncryptPhraseForm

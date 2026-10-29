@@ -2,11 +2,10 @@ import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 
 interface WalletState {
-  walletAddress: string;
-  unhardenedPkHex: string; // Безопасный публичный ключ для TanStack Query
+  unhardenedPkHex: string; // Главный публичный ключ кошелька для генерации адресов и TanStack Query
   isScreenLocked: boolean;
   isVerifying: boolean;
-  setWalletData: (address: string, pkHex: string) => void;
+  setWalletData: (pkHex: string) => void;
   setScreenLocked: (status: boolean) => void;
   setVerifying: (status: boolean) => void;
   clearStore: () => void;
@@ -15,13 +14,12 @@ interface WalletState {
 export const useWalletStore = create<WalletState>()(
   persist(
     (set) => ({
-      walletAddress: '',
       unhardenedPkHex: '',
       isScreenLocked: true, 
       isVerifying: true,
 
-      setWalletData: (address, pkHex) => set({
-        walletAddress: address,
+      // Принимаем только публичный ключ
+      setWalletData: (pkHex) => set({
         unhardenedPkHex: pkHex,
         isScreenLocked: false
       }),
@@ -30,7 +28,6 @@ export const useWalletStore = create<WalletState>()(
       setVerifying: (status) => set({ isVerifying: status }),
       
       clearStore: () => set({
-        walletAddress: '',
         unhardenedPkHex: '',
         isScreenLocked: true,
         isVerifying: false
@@ -38,10 +35,13 @@ export const useWalletStore = create<WalletState>()(
     }),
     {
       name: 'xcha-wallet-session',
-      storage: createJSONStorage(() => (typeof window !== 'undefined' ? sessionStorage : { getItem: () => null, setItem: () => {}, removeItem: () => {} })),
-      // В sessionStorage улетает вся структура, так как в ней больше нет приватных данных!
+      storage: createJSONStorage(() => 
+        typeof window !== 'undefined' 
+          ? sessionStorage 
+          : { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+      ),
+      // Сохраняем в сессию только ключ и статус блокировки экранa
       partialize: (state) => ({
-        walletAddress: state.walletAddress,
         unhardenedPkHex: state.unhardenedPkHex,
         isScreenLocked: state.isScreenLocked,
       }),

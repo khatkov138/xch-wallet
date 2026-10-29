@@ -7,6 +7,7 @@ import { sha256 } from "@noble/hashes/sha2";
 import { bech32m } from "bech32";
 import { clvmTree, parseCLVMBytes, intToBytes, serializeSolution } from "@/lib/crypto";
 import { PrepareSchema } from "@/lib/validations/coin";
+import chiaBls from "chia-bls"; // 👈 Обязательно импортируем библиотеку для деривации childPk
 
 const DEFAULT_MIN_FEE = 100_000_000n; // 0.0001 XCH в mojo
 
@@ -16,16 +17,16 @@ const toBytes = (h: string) => {
   return new Uint8Array(c.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
 };
 
-function generateContractData(pkHex: string) {
-  const pB = toBytes(pkHex);
+// Функция теперь принимает правильный деривированный childPkBytes
+function generateContractDataFromChild(childPkBytes: Uint8Array) {
   const cB = toBytes(process.env.NEXT_PUBLIC_CONTRACT_HEX || "");
   const pfx = toBytes("ff02ffff01"), mid = toBytes("ffff04ffff01b0"), sfx = toBytes("ff018080");
   
-  const fullReveal = new Uint8Array(pfx.length + cB.length + mid.length + pB.length + sfx.length);
+  const fullReveal = new Uint8Array(pfx.length + cB.length + mid.length + childPkBytes.length + sfx.length);
   fullReveal.set(pfx, 0); 
   fullReveal.set(cB, pfx.length); 
   fullReveal.set(mid, pfx.length + cB.length); 
-  fullReveal.set(pB, pfx.length + cB.length + mid.length); 
+  fullReveal.set(childPkBytes, pfx.length + cB.length + mid.length); 
   fullReveal.set(sfx, fullReveal.length - sfx.length);
 
   const contractPuzzleHash = clvmTree(parseCLVMBytes(fullReveal).node);
@@ -55,7 +56,6 @@ export async function POST(request: NextRequest) {
     const origin = request.nextUrl.origin;
     const balanceUrl = `${origin}/api/wallet/balance?publicKeyHex=${publicKeyHex}`;
     
-
     const balanceRes = await fetch(balanceUrl, { method: "GET" });
     const balanceData = await balanceRes.json();
 
@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
     const allAddresses = balanceData.data.addresses || [];
     let biggestCoin: any = null;
     let maxAmount = -1n;
+    let targetCoinIndex = 0; // 🔥 Сюда сохраним точный индекс монеты
 
     // Скан по всем адресам и поиск САМОЙ БОЛЬШОЙ непотраченной монеты
     for (const addrRecord of allAddresses) {
@@ -79,6 +80,7 @@ export async function POST(request: NextRequest) {
             if (currentCoinAmount > maxAmount) {
               maxAmount = currentCoinAmount;
               biggestCoin = coinRecord;
+              targetCoinIndex = addrRecord.index; // 🔥 Запоминаем индекс (0..99)
             }
           }
         }
@@ -89,8 +91,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "No unspent coins found on any index" }, { status: 404 });
     }
 
-    // Используем найденную самую жирную монету
-    const { fullReveal, contractPuzzleHash } = generateContractData(publicKeyHex);
+    // 🔥 ДЕРИВАЦИЯ ПРАВИЛЬНОГО ДОЧЕРНЕГО ПУБЛИЧНОГО КЛЮЧА НА ОСНОВЕ ИНДЕКСА
+    const masterWalletPk = chiaBls.JacobianPoint.fromHex(publicKeyHex.trim(), false);
+    const childPk = (chiaBls.AugSchemeMPL || (chiaBls as any).AugSchemeMPL).deriveChildPkUnhardened(masterWalletPk, targetCoinIndex);
+    const childPkBytes = childPk.toBytes();
+
+    // Собираем данные контракта именно под этот дочерний ключ
+    const { fullReveal, contractPuzzleHash } = generateContractDataFromChild(childPkBytes);
     const coinAmount = BigInt(biggestCoin.coin.amount);
     
     if (sendAmount > coinAmount - currentMinFee) {
@@ -118,6 +125,7 @@ export async function POST(request: NextRequest) {
       success: true,
       spendData: {
         msgHex: toHex(msg),
+        targetIndex: targetCoinIndex, // 🔥 Передаем индекс на фронтенд для подписи
         coinSpend: {
           coin: { 
             amount: Number(coinAmount), 

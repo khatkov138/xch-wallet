@@ -11,26 +11,16 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
   const { getUnhardenedPkHex, getSkHexByPin, lockWallet } = useWalletAuth()
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
-  const [amount, setAmount] = useState("") 
+  const [amount, setAmount] = useState("")
   const [customFeeMojo, setCustomFeeMojo] = useState("5000000")
-  const [pin, setPin] = useState("") 
-  const [pinAttempts, setPinAttempts] = useState(0) // 🛡️ Счётчик неверных вводов ПИН-кода
+  const [pin, setPin] = useState("")
+  const [pinAttempts, setPinAttempts] = useState(0)
   const [loading, setLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState("")
   const [debugJsonString, setDebugJsonString] = useState("")
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
 
-  useEffect(() => { 
-    if (!isOpen) { 
-      setPin(""); 
-      setStep(1); 
-      setStatusMessage(""); 
-      setDebugJsonString(""); 
-      setPreparedSpendData(null); 
-      setPinAttempts(0); 
-    } 
-  }, [isOpen])
-
+  useEffect(() => { if (!isOpen) { setPin(""); setStep(1); setStatusMessage(""); setDebugJsonString(""); setPreparedSpendData(null); setPinAttempts(0); } }, [isOpen])
   if (!isOpen) return null
 
   const getFeeInXchString = () => {
@@ -39,59 +29,39 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (loading) return
-
+    e.preventDefault(); if (loading) return
     if (step === 1) {
       if (!targetAddress || !amount) return
       setLoading(true); setStatusMessage(""); setDebugJsonString("")
       try {
-        const pkHex = getUnhardenedPkHex()
-        if (!pkHex) throw new Error("Не удалось получить публичный ключ")
-        const xch = parseFloat(amount.trim().replace(",", "."))
-        if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
-
+        const pkHex = getUnhardenedPkHex(); if (!pkHex) throw new Error("Не удалось получить публичный ключ")
+        const xch = parseFloat(amount.trim().replace(",", ".")); if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
         const payload = { address: targetAddress.trim(), publicKeyHex: pkHex, amount: Math.round(xch * 1_000_000_000_000).toString(), minFee: customFeeMojo.trim() || "0" }
-        const valid = PrepareSchema.safeParse(payload);
-        if (!valid.success) throw new Error(Object.values(valid.error.flatten().fieldErrors)[0]?.[0] || "Ошибка валидации");
-
+        const valid = PrepareSchema.safeParse(payload); if (!valid.success) throw new Error(Object.values(valid.error.flatten().fieldErrors)[0]?.[0] || "Ошибка валидации")
         setStatusMessage("⏳ Поиск монет на контракте...")
         const res = await fetch("/api/coin/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
         const result = await res.json(); setDebugJsonString(JSON.stringify(result, null, 2))
         if (!res.ok || !result.success) throw new Error(result.error || "Не удалось подготовить трату")
-
         setPreparedSpendData(result.spendData); setStep(2)
       } catch (err: any) { setStatusMessage(`❌ Ошибка: ${err.message || err}`) } finally { setLoading(false) }
     } else {
-      if (!preparedSpendData?.msgHex) return
-      if (!pin) return setStatusMessage("❌ Пожалуйста, введите ПИН-код")
+      if (!preparedSpendData?.msgHex || !pin) return
       if (pin.length !== 6) return setStatusMessage("❌ ПИН-код должен состоять из 6 цифр")
-      
-      setLoading(true); setStatusMessage("")
-      try {
+      setLoading(true); setStatusMessage(""); try {
         setStatusMessage("🔐 Локальное подписание...")
-        const skHex = await getSkHexByPin(pin) 
         
-        const bundle = createChiaSpendBundle({ walletPrivateKeyHex: skHex, msgHex: preparedSpendData.msgHex, coinSpend: preparedSpendData.coinSpend })
-        setDebugJsonString(JSON.stringify({ message: "Сформирован SpendBundle", spend_bundle: bundle }, null, 2))
+        const childSkHex = await getSkHexByPin(pin, 3, preparedSpendData.targetIndex ?? 0)
+        const bundle = createChiaSpendBundle({ walletPrivateKeyHex: childSkHex, msgHex: preparedSpendData.msgHex, coinSpend: preparedSpendData.coinSpend })
 
+        setDebugJsonString(JSON.stringify({ message: "Сформирован SpendBundle", spend_bundle: bundle }, null, 2))
         setStatusMessage("🚀 Отправка пакета трат в сеть...")
         const res = await fetch("/api/coin/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spend_bundle: bundle }) })
         const result = await res.json(); setDebugJsonString(JSON.stringify(result, null, 2))
         if (!res.ok || !result.success) throw new Error(result.error || "Нода отклонила транзакцию")
-
         setStatusMessage("🎉 Успешно! Монеты отправлены!"); setPin(""); setPinAttempts(0);
-      } catch (err: any) { 
-        const nextAttempts = pinAttempts + 1
-        setPinAttempts(nextAttempts)
-        setPin("")
-
-        if (nextAttempts >= 3) {
-          lockWallet() 
-          onClose()    
-        } else {
-          setStatusMessage(`❌ Неверный ПИН-код! Осталось попыток: ${3 - nextAttempts}`)
-        }
+      } catch (err: any) {
+        const nextAttempts = pinAttempts + 1; setPinAttempts(nextAttempts); setPin("");
+        if (nextAttempts >= 3) { lockWallet(); onClose(); } else setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось: ${3 - nextAttempts}`)
       } finally { setLoading(false) }
     }
   }
@@ -101,11 +71,7 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
       <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl max-h-[95vh] overflow-y-auto">
         <button type="button" onClick={onClose} className="absolute top-4 right-4 text-zinc-400 hover:text-white cursor-pointer"><X size={18} /></button>
         <h3 className="text-lg font-bold mb-4 tracking-tight">Отправить XCH</h3>
-
-        {/* ОДНА ЕДИНАЯ ФОРМА НА ОБА ШАГА */}
         <form onSubmit={handleSubmit} className="space-y-4">
-          
-          {/* ПОЛЯ ШАГА 1 */}
           {step === 1 && (
             <>
               <div>
@@ -123,8 +89,6 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
               </div>
             </>
           )}
-
-          {/* ПОЛЯ ШАГА 2 */}
           {step === 2 && (
             <>
               <div className="bg-zinc-950 p-4 rounded-xl space-y-2 text-xs">
@@ -138,20 +102,13 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
               </div>
             </>
           )}
-
-          {/* ОБЩИЙ БЛОК СТАТУСА И ЛОГОВ */}
-          {statusMessage && (
-            <div className="text-xs text-center font-medium bg-zinc-950 border border-zinc-850 p-2.5 rounded-xl text-zinc-300 max-h-24 overflow-y-auto whitespace-pre-wrap">{statusMessage}</div>
-          )}
-
+          {statusMessage && <div className="text-xs text-center font-medium bg-zinc-950 border border-zinc-850 p-2.5 rounded-xl text-zinc-300 max-h-24 overflow-y-auto whitespace-pre-wrap">{statusMessage}</div>}
           {debugJsonString && (
             <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-orange-400 pl-1">📋 Сквозной JSON-Лог (Ctrl+A  Ctrl+C):</label>
+              <label className="block text-[10px] font-bold text-orange-400 pl-1">📋 Сквозной JSON-Лог:</label>
               <textarea readOnly value={debugJsonString} onClick={(e) => (e.target as HTMLTextAreaElement).select()} className="w-full h-32 bg-zinc-950 text-green-400 font-mono text-[9px] p-2 rounded-xl border border-zinc-800 resize-none focus:outline-none cursor-pointer" />
             </div>
           )}
-
-          {/* КНОПКИ УПРАВЛЕНИЯ */}
           {step === 1 ? (
             <Button type="submit" disabled={loading || !targetAddress || !amount} className="w-full h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition-all">
               {loading ? <Loader2 size={14} className="animate-spin" /> : "Проверить монеты и собрать контракт"}
@@ -164,7 +121,6 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
               </Button>
             </div>
           )}
-
         </form>
       </div>
     </div>

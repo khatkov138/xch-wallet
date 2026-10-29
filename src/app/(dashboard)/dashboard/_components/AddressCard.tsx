@@ -1,15 +1,30 @@
 'use client'
 
-import React, { useState } from "react"
+import React, { useState, useMemo } from "react"
 import { Copy, Check, Loader2 } from "lucide-react"
+import { useWalletAuth } from "@/hooks/useWalletAuth" // Поправь путь к твоему хуку
+import { getContractAddressByPublicKey } from "@/lib/crypto" // Твоя готовая функция из исходника
 
-interface AddressCardProps {
-  address: string
-}
-
-export function AddressCard({ address }: AddressCardProps) {
+export function AddressCard() {
   const [copied, setCopied] = useState(false)
   
+  // 1. Достаем метод получения публичного ключа из твоего хука
+  const { getUnhardenedPkHex } = useWalletAuth()
+  const unhardenedPkHex = getUnhardenedPkHex()
+
+  // 2. Генерируем адрес на лету для 0-го индекса
+  const address = useMemo(() => {
+    if (!unhardenedPkHex) return ""
+    try {
+      // Используем префикс "txch" (можешь заменить на "xch" для мейннета)
+      const result = getContractAddressByPublicKey(unhardenedPkHex, 0, "txch")
+      return result?.address || ""
+    } catch (err) {
+      console.error("Ошибка генерации адреса в компоненте:", err)
+      return ""
+    }
+  }, [unhardenedPkHex])
+
   const isLoaded = Boolean(address)
 
   const copyAddress = async () => {
