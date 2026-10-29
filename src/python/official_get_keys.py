@@ -2,12 +2,10 @@ import os
 import json
 import requests
 import urllib3
-from chia_rs import AugSchemeMPL, PrivateKey, G1Element
+from chia_rs import AugSchemeMPL, G1Element
 from chia.util.bech32m import encode_puzzle_hash
 
 # Импорты деривации ядра Chia
-from chia.util.keychain import mnemonic_to_seed
-from chia.wallet.derive_keys import master_sk_to_wallet_sk_unhardened
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
 
 # Отключаем ворнинги SSL
@@ -15,6 +13,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_RPC_URL = "https://localhost:8555"  # Порт Full Node RPC
 TESTNET_PREFIX = "txch"                  # Для майннета поменяй на "xch"
+
+# ДАННЫЕ ИЗ ВАШЕГО CLI (БЕЗ МНЕМОНИКИ И ПРИВАТНЫХ КЛЮЧЕЙ)
+MASTER_PUBLIC_KEY_HEX = "8051ff395c5ca08d48719d2d2efcf673f05523ae2839419ab719473c940136ae456750ac9965d0b1628f545d8d2fe6f2"
 
 def get_ssl_credentials():
     """Динамический поиск SSL сертификатов full_node"""
@@ -27,12 +28,16 @@ def get_ssl_credentials():
             return cert_path, key_path
     return "C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node\\private_full_node.crt", "C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node\\private_full_node.key"
 
-def get_puzzle_hash_from_sk(wallet_sk: PrivateKey) -> bytes:
-    """Напрямую извлекает bytes пазл-хэша из приватного ключа"""
-    raw_pk = wallet_sk.get_g1()
-    wallet_pk = G1Element.from_bytes(bytes(raw_pk))
-    puzzle = puzzle_for_pk(wallet_pk)
-    return puzzle.get_tree_hash()
+def get_wallet_pk_unhardened(master_pk: G1Element, index: int) -> G1Element:
+    """
+    Прямая деривация публичного ключа кошелька по индексу с использованием AugSchemeMPL.
+    Полный путь деривации: m/12381/8444/2/index
+    """
+    path = [12381, 8444, 2, index]
+    current_pk = master_pk
+    for element in path:
+        current_pk = AugSchemeMPL.derive_child_pk_unhardened(current_pk, element)
+    return current_pk
 
 def check_balances_via_full_node(puzzle_hashes_dict):
     """
@@ -97,35 +102,37 @@ def check_balances_via_full_node(puzzle_hashes_dict):
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("🤖 АВТОНОМНЫЙ RPC СКАНЕР БАЛАНСОВ НА 200 АДРЕСОВ")
+    print("🤖 АВТОНОМНЫЙ ПУБЛИЧНЫЙ RPC СКАНЕР БАЛАНСОВ НА 200 АДРЕСОВ")
     print("=" * 80)
     
-    MNEMONIC = (
-        "material harvest garage wish seed possible item solar zero pupil off saddle "
-        "glass dial burden desk apology wrap ivory work need favorite tilt burden"
-    )
-    
     try:
-        # 1. Генерируем ключи и создаем карту соответствия хэшей к индексам
-        seed = mnemonic_to_seed(MNEMONIC)
-        master_sk = AugSchemeMPL.key_gen(seed)
+        # 1. Загружаем Master Public Key из шестнадцатеричной строки
+        master_pk = G1Element.from_bytes(bytes.fromhex(MASTER_PUBLIC_KEY_HEX))
         
-        # Нам нужен быстрый поиск O(1), поэтому делаем словарь: {hex_hash: (index, address)}
         puzzle_hashes_map = {}
         
-        print("Генерация локальной матрицы адресов и хэшей...")
+        print("Генерация локальной матрицы адресов по ПУБЛИЧНЫМ ключам...")
         for index in range(200):
-            wallet_sk = master_sk_to_wallet_sk_unhardened(master_sk, index)
-            puz_hash_bytes = get_puzzle_hash_from_sk(wallet_sk)
+            # Деривация публичного ключа для конкретного индекса напрямую через bls криптографию
+            wallet_pk = get_wallet_pk_unhardened(master_pk, index)
+            
+            # Из публичного ключа генерируем стандартный смарт-контракт (puzzle) монеты Chia
+            puzzle = puzzle_for_pk(wallet_pk)
+            puz_hash_bytes = puzzle.get_tree_hash()
             puz_hash_hex = puz_hash_bytes.hex()
             
+            # Кодируем в bech32m адрес кошелька
             addr = encode_puzzle_hash(puz_hash_bytes, TESTNET_PREFIX)
             puzzle_hashes_map[puz_hash_hex] = (index, addr)
+            
+            # Выводим первый сгенерированный адрес для визуальной проверки на соответствие вашему CLI
+            if index == 0:
+                print(f"[Проверка] Сгенерирован первый адрес: {addr}")
             
         print(f"Локальная матрица готова: {len(puzzle_hashes_map)} элементов.")
         print("-" * 80)
         
-        # 2. Стучимся в Full Node RPC и забираем балансы
+        # 2. Делаем запрос к Full Node RPC для проверки текущих балансов
         check_balances_via_full_node(puzzle_hashes_map)
         
     except Exception as e:

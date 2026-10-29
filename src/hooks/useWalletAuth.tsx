@@ -6,8 +6,8 @@ import { useWalletStore } from "@/store/useWalletStore"
 import { runCryptoAudit, decryptMnemonic } from "@/lib/crypto"
 import chiaBls from 'chia-bls';
 
-//const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
-const INACTIVITY_TIMEOUT = 10 * 1000 // 10sec
+const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
+//const INACTIVITY_TIMEOUT = 10 * 1000 // 10sec
 export function useWalletAuth() {
   const router = useRouter()
   const pathname = usePathname()

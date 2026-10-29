@@ -4,21 +4,48 @@ import React, { useState, useEffect } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
-import { PrepareSchema } from "@/lib/validations/coin"
-import { createChiaSpendBundle } from "@/lib/chia-spend"
+import { useWalletPublicKey } from "@/hooks/useWalletPublicKey"
+import bip39 from 'bip39'
+import chiaBls from 'chia-bls'
+import { sha256 } from '@noble/hashes/sha2'
+
+const { PrivateKey } = chiaBls;
+const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
+
+// ЖЕСТКИЙ ХАРДКОД ТВОЕЙ ТЕСТОВОЙ МНЕМОНИКИ
+const HARDCODED_MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden";
+
+function intToBytes4(val: number): Uint8Array {
+  return new Uint8Array([(val >> 24) & 0xff, (val >> 16) & 0xff, (val >> 8) & 0xff, val & 0xff]);
+}
+
+function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
+  const parentPkBytes = parentSk.getG1().toBytes();
+  const indexBytes = intToBytes4(index);
+  const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
+  concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
+  const hash = sha256(concat);
+  const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
+  const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
+  const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
+  return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
+}
 
 export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { getUnhardenedPkHex, getSkHexByPin, lockWallet } = useWalletAuth()
+  const { lockWallet } = useWalletAuth()
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
-  const [customFeeMojo, setCustomFeeMojo] = useState("5000000")
+  const [customFeeMojo, setCustomFeeMojo] = useState("5000000") // 5M mojo дефолт
   const [pin, setPin] = useState("")
   const [pinAttempts, setPinAttempts] = useState(0)
   const [loading, setLoading] = useState(false)
   const [statusMessage, setStatusMessage] = useState("")
   const [debugJsonString, setDebugJsonString] = useState("")
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
+
+  // ЮЗАЕМ НАШ ХУК: Автоматически достаем master_pk_hex из захардкоженной мнемоники
+  const { masterPkHex } = useWalletPublicKey({ mnemonic: HARDCODED_MNEMONIC })
 
   useEffect(() => { if (!isOpen) { setPin(""); setStep(1); setStatusMessage(""); setDebugJsonString(""); setPreparedSpendData(null); setPinAttempts(0); } }, [isOpen])
   if (!isOpen) return null
@@ -30,38 +57,89 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); if (loading) return
+
+    // --- ШАГ 1: Поиск монет и сборка бандла по masterPkHex из хука ---
     if (step === 1) {
       if (!targetAddress || !amount) return
       setLoading(true); setStatusMessage(""); setDebugJsonString("")
       try {
-        const pkHex = getUnhardenedPkHex(); if (!pkHex) throw new Error("Не удалось получить публичный ключ")
+        if (!masterPkHex) throw new Error("Хук еще не вычислил публичный ключ")
         const xch = parseFloat(amount.trim().replace(",", ".")); if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
-        const payload = { address: targetAddress.trim(), publicKeyHex: pkHex, amount: Math.round(xch * 1_000_000_000_000).toString(), minFee: customFeeMojo.trim() || "0" }
-        const valid = PrepareSchema.safeParse(payload); if (!valid.success) throw new Error(Object.values(valid.error.flatten().fieldErrors)[0]?.[0] || "Ошибка валидации")
-        setStatusMessage("⏳ Поиск монет на контракте...")
-        const res = await fetch("/api/coin/prepare", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-        const result = await res.json(); setDebugJsonString(JSON.stringify(result, null, 2))
-        if (!res.ok || !result.success) throw new Error(result.error || "Не удалось подготовить трату")
-        setPreparedSpendData(result.spendData); setStep(2)
-      } catch (err: any) { setStatusMessage(`❌ Ошибка: ${err.message || err}`) } finally { setLoading(false) }
-    } else {
-      if (!preparedSpendData?.msgHex || !pin) return
-      if (pin.length !== 6) return setStatusMessage("❌ ПИН-код должен состоять из 6 цифр")
-      setLoading(true); setStatusMessage(""); try {
-        setStatusMessage("🔐 Локальное подписание...")
-        
-        const childSkHex = await getSkHexByPin(pin, 3, preparedSpendData.targetIndex ?? 0)
-        const bundle = createChiaSpendBundle({ walletPrivateKeyHex: childSkHex, msgHex: preparedSpendData.msgHex, coinSpend: preparedSpendData.coinSpend })
 
-        setDebugJsonString(JSON.stringify({ message: "Сформирован SpendBundle", spend_bundle: bundle }, null, 2))
+        setStatusMessage("⏳ Поиск монет на контракте...")
+
+        const res = await fetch("http://localhost:8000/api/v1/transactions/build-spend-bundle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            master_pk_hex: masterPkHex, // Передаем PK из хука
+            send_to_address: targetAddress.trim(),
+            mojos_to_send: Math.round(xch * 1_000_000_000_000),
+            fee_mojos: parseInt(customFeeMojo.trim() || "0", 10)
+          })
+        })
+
+        const result = await res.json();
+        setDebugJsonString(JSON.stringify(result, null, 2))
+
+        if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить трату")
+
+        setPreparedSpendData(result);
+        setStep(2)
+        setStatusMessage("")
+      } catch (err: any) {
+        setStatusMessage(`❌ Ошибка: ${err.message || err}`)
+      } finally {
+        setLoading(false)
+      }
+      // --- ШАГ 2: Локальная деривация захардкоженной фразы и отправка на пуш ---
+    } else {
+      if (!preparedSpendData?.message_to_sign_hex || !pin) return
+      if (pin.length !== 6) return setStatusMessage("❌ ПИН-код должен состоять из 6 цифр")
+
+      setLoading(true); setStatusMessage("");
+      try {
+        setStatusMessage("🔐 Локальное подписание...")
+
+        // Восстанавливаем seed из захардкоженной мнемоники напрямую
+        const seed = bip39.mnemonicToSeedSync(HARDCODED_MNEMONIC.trim());
+        const masterSk = PrivateKey.fromSeed(seed);
+
+        let walletBranchSk = masterSk;
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 12381);
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 8444);
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 2);
+
+        // Динамический индекс от Питона (хоть 0, хоть 170)
+        const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, preparedSpendData.target_wallet_index);
+        const childSkHex = Buffer.from(targetSk.toBytes()).toString('hex');
+
         setStatusMessage("🚀 Отправка пакета трат в сеть...")
-        const res = await fetch("/api/coin/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ spend_bundle: bundle }) })
-        const result = await res.json(); setDebugJsonString(JSON.stringify(result, null, 2))
-        if (!res.ok || !result.success) throw new Error(result.error || "Нода отклонила транзакцию")
-        setStatusMessage("🎉 Успешно! Монеты отправлены!"); setPin(""); setPinAttempts(0);
+
+        const res = await fetch("http://localhost:8000/api/v1/transactions/send-tx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            master_pk_hex: masterPkHex,
+            child_sk_hex: childSkHex,
+            send_to_address: targetAddress.trim(),
+            mojos_to_send: Math.round(parseFloat(amount) * 1_000_000_000_000),
+            fee_mojos: parseInt(customFeeMojo.trim() || "0", 10)
+          })
+        })
+
+        const result = await res.json();
+        setDebugJsonString(JSON.stringify(result, null, 2))
+
+        if (!res.ok || !result.success) throw new Error(result.detail || "Нода отклонила транзакцию")
+
+        setStatusMessage("🎉 Успешно! Монеты отправлены!");
+        setPin("");
+        setPinAttempts(0);
       } catch (err: any) {
         const nextAttempts = pinAttempts + 1; setPinAttempts(nextAttempts); setPin("");
-        if (nextAttempts >= 3) { lockWallet(); onClose(); } else setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось: ${3 - nextAttempts}`)
+        if (nextAttempts >= 3) { lockWallet(); onClose(); }
+        else setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось: ${3 - nextAttempts}\n${err.message || err}`)
       } finally { setLoading(false) }
     }
   }
@@ -92,9 +170,9 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           {step === 2 && (
             <>
               <div className="bg-zinc-950 p-4 rounded-xl space-y-2 text-xs">
-                <div><span className="text-zinc-400">Получатель:</span> {targetAddress}</div>
+                <div className="break-all"><span className="text-zinc-400">Получатель:</span> {targetAddress}</div>
                 <div><span className="text-zinc-400">Сумма:</span> {amount} XCH</div>
-                <div><span className="text-zinc-400">Хеш (msgHex):</span> <span className="font-mono text-orange-400">{preparedSpendData?.msgHex}</span></div>
+                <div className="break-all"><span className="text-zinc-400">Хеш (msgHex):</span> <span className="font-mono text-orange-400">{preparedSpendData?.message_to_sign_hex}</span></div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-zinc-400 mb-1.5">Введите ПИН-код кошелька</label>
@@ -106,23 +184,23 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           {debugJsonString && (
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-orange-400 pl-1">📋 Сквозной JSON-Лог:</label>
-              <textarea readOnly value={debugJsonString} onClick={(e) => (e.target as HTMLTextAreaElement).select()} className="w-full h-32 bg-zinc-950 text-green-400 font-mono text-[9px] p-2 rounded-xl border border-zinc-800 resize-none focus:outline-none cursor-pointer" />
+              <textarea readOnly value={debugJsonString} onClick={(e: any) => e.target.select()} className="w-full h-32 bg-zinc-950 text-green-400 font-mono text-[9px] p-2 rounded-xl border border-zinc-800 resize-none focus:outline-none cursor-pointer" />
             </div>
           )}
           {step === 1 ? (
-            <Button type="submit" disabled={loading || !targetAddress || !amount} className="w-full h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition-all">
-              {loading ? <Loader2 size={14} className="animate-spin" /> : "Проверить монеты и собрать контракт"}
+            <Button type="submit" disabled={loading || !targetAddress || !amount} className="w-full h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition-all cursor-pointer">
+              {loading ? <Loader2 size={14} className="animate-spin text-black" /> : "Проверить монеты и собрать контракт"}
             </Button>
           ) : (
             <div className="flex gap-2">
-              <Button type="button" variant="outline" disabled={loading} onClick={() => setStep(1)} className="w-1/3 h-12 rounded-xl text-xs font-bold">Назад</Button>
-              <Button type="submit" disabled={loading || !pin} className="w-2/3 h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs">
-                {loading ? <Loader2 size={14} className="animate-spin" /> : "Подписать контракт и отправить"}
+              <Button type="button" variant="outline" disabled={loading} onClick={() => setStep(1)} className="w-1/3 h-12 rounded-xl text-xs font-bold cursor-pointer">Назад</Button>
+              <Button type="submit" disabled={loading || !pin} className="w-2/3 h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer">
+                {loading ? <Loader2 size={14} className="animate-spin text-black" /> : "Подписать контракт и отправить"}
               </Button>
             </div>
           )}
         </form>
       </div>
     </div>
-  )
+  );
 }

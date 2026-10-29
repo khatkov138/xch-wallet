@@ -21,7 +21,7 @@ const { PrivateKey, AugSchemeMPL } = chiaBls;
 
 
 const bytesToHex = (b: Uint8Array): string => Array.from(b).map(x => x.toString(16).padStart(2, '0')).join('');
-const hexToBytes = (h: string): Uint8Array => {
+export const hexToBytes = (h: string): Uint8Array => {
   const clean = h.replace(/\s+/g, '').startsWith('0x') ? h.replace(/\s+/g, '').slice(2) : h.replace(/\s+/g, '');
   const b = new Uint8Array(clean.length / 2);
   for (let i = 0; i < clean.length; i += 2) b[i / 2] = parseInt(clean.substring(i, i + 2), 16);

@@ -1,36 +1,31 @@
 'use client'
 
-import React, { useState, useMemo } from "react"
+import React, { useState } from "react"
 import { Copy, Check, Loader2 } from "lucide-react"
-import { useWalletAuth } from "@/hooks/useWalletAuth" // Поправь путь к твоему хуку
-import { getContractAddressByPublicKey } from "@/lib/crypto" // Твоя готовая функция из исходника
+import { useWalletAuth } from "@/hooks/useWalletAuth" 
+import { useWalletBalance } from "@/hooks/useWalletBalance" // 🔥 Подключаем наш реактивный хук баланса
 
 export function AddressCard() {
   const [copied, setCopied] = useState(false)
   
-  // 1. Достаем метод получения публичного ключа из твоего хука
+  // 1. Проверяем авторизацию / наличие ключа
   const { getUnhardenedPkHex } = useWalletAuth()
   const unhardenedPkHex = getUnhardenedPkHex()
 
-  // 2. Генерируем адрес на лету для 0-го индекса
-  const address = useMemo(() => {
-    if (!unhardenedPkHex) return ""
-    try {
-      // Используем префикс "txch" (можешь заменить на "xch" для мейннета)
-      const result = getContractAddressByPublicKey(unhardenedPkHex, 0, "txch")
-      return result?.address || ""
-    } catch (err) {
-      console.error("Ошибка генерации адреса в компоненте:", err)
-      return ""
-    }
-  }, [unhardenedPkHex])
+  // 2. 🔥 Забираем готовые адреса из нашего TanStack Query кэша
+  // Хук не будет делать новый запрос к бэку, он возьмет данные из общего кэша дашборда
+  const { addresses, isLoading } = useWalletBalance()
 
-  const isLoaded = Boolean(address)
+  // Находим самый первый адрес (индекс 0), который сгенерировал бэкенд
+  const address0 = addresses.find((a) => a.index === 0)?.address || ""
+
+  // Карточка считается загруженной, когда есть и публичный ключ, и адрес от бэкенда
+  const isLoaded = Boolean(unhardenedPkHex) && Boolean(address0) && !isLoading
 
   const copyAddress = async () => {
     if (!isLoaded) return
     try {
-      await navigator.clipboard.writeText(address)
+      await navigator.clipboard.writeText(address0)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
@@ -42,7 +37,7 @@ export function AddressCard() {
     <div className="bg-zinc-900/30 border border-zinc-900 shadow-xl backdrop-blur-xl rounded-[24px] p-4 space-y-2.5">
       <div className="flex items-center justify-between">
         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-0.5">
-          Ваш адрес Chia
+          Ваш адрес Chia (Index 0)
         </span>
         <button 
           onClick={copyAddress}
@@ -65,7 +60,7 @@ export function AddressCard() {
       <div className="bg-zinc-950/50 border border-zinc-900 p-3 rounded-xl font-mono text-[11px] text-zinc-300 break-all select-all leading-normal tracking-tight min-h-[42px] flex items-center justify-center">
         {isLoaded ? (
           <span className="w-full text-left font-semibold tracking-wider text-zinc-200">
-            {address}
+            {address0}
           </span>
         ) : (
           <div className="flex items-center gap-2 text-zinc-500 text-[10px] font-bold uppercase tracking-wider animate-pulse">

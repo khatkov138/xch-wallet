@@ -4,23 +4,28 @@ import React from "react"
 import { ArrowUpRight, ArrowDownLeft, Layers } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useQuery } from "@tanstack/react-query"
-import { handleApi } from "@/lib/utils"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
+import { useWalletPublicKey } from "@/hooks/useWalletPublicKey" // 🔥 Тот самый проверенный хук
 import { CleanTransaction, formatAddress, formatDate } from "@/app/types/chia"
 
 export function ActivityList() {
-  // Достаем метод получения публичного ключа кошелька прямо из твоего хука авторизации
-  const { getUnhardenedPkHex } = useWalletAuth()
-  const walletPublicKeyHex = getUnhardenedPkHex()
+  // 🔥 Вытаскиваем Master PK строго из проверенного хука с дефолтной мнемоникой
+  const { masterPkHex } = useWalletPublicKey({
+    mnemonic: 'material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden'
+  })
 
-  // Запрашиваем сквозную историю транзакций по публичному ключу для всех 100 индексов сразу
+  // Запрашиваем историю транзакций по проверенному publicKeyHex
   const { data: transactions = [] } = useQuery<CleanTransaction[]>({
-    queryKey: ['walletTransactions', walletPublicKeyHex],
-    queryFn: () => handleApi<CleanTransaction[]>(fetch(`/api/wallet/transactions?publicKeyHex=${walletPublicKeyHex}`)),
-    enabled: !!walletPublicKeyHex,
+    queryKey: ['walletTransactions', masterPkHex],
+    queryFn: async () => {
+      const res = await fetch(`http://localhost:8000/api/wallet/transactions?publicKeyHex=${masterPkHex}&limit=200`);
+      if (!res.ok) throw new Error("Ошибка загрузки истории");
+      return res.json();
+    },
+    enabled: !!masterPkHex,
     refetchInterval: 10000,
     staleTime: 5000,
   })
+
 
   return (
     <div className="space-y-2.5">

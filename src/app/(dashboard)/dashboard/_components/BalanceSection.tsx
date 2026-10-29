@@ -4,15 +4,20 @@ import React from "react"
 import { RefreshCw } from "lucide-react"
 import { useWalletBalance } from "@/hooks/useWalletBalance"
 
+// Исправленная и безопасная функция форматирования — никогда не упадет в undefined
 function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
-  if (!str.includes(".")) return `${str}.${"0".repeat(decimals)}`;
+  if (!str.includes(".")) {
+    return `${str}.${"0".repeat(decimals)}`;
+  }
   const [integerPart, fractionalPart] = str.split(".");
-  return `${integerPart}.${fractionalPart.slice(0, decimals).padEnd(decimals, "0")}`;
+  // Добавлена проверка на существование дробной части (защита от undefined)
+  const safeFractional = fractionalPart || "";
+  return `${integerPart}.${safeFractional.slice(0, decimals).padEnd(decimals, "0")}`;
 }
 
 export function BalanceSection() {
-  // Просто вызываем наш чистый хук, никакой логики запросов внутри компонента!
+  // Вызываем наш чистый хук, никакой логики запросов внутри компонента!
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletBalance()
 
   const balanceXCH = error ? "0.0000" : formatStringBalance(realXCHStr, 4)
