@@ -55,9 +55,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const publicKeyHex = searchParams.get("publicKeyHex");
 
-  console.log(`\n[CHIA MULTI-INDEX BALANCE] ==========================================`);
-  console.log(`[CHIA MULTI-INDEX BALANCE] [START] Инициализация сканирования баланса по пулу индексов`);
-  console.log(`[CHIA MULTI-INDEX BALANCE] [INPUT] Входящий Master/Wallet PK Hex: "${publicKeyHex}"`);
+
 
   if (!publicKeyHex) {
     return NextResponse.json({ success: false, data: null, error: "publicKeyHex query parameter is required" }, { status: 400 });
@@ -97,8 +95,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const rpcPayload = JSON.stringify({ puzzle_hashes: puzzleHashesList, include_spent_coins: false });
-    console.log(`[CHIA MULTI-INDEX BALANCE] [RPC REQUEST] POST -> https://localhost:8555/get_coin_records_by_puzzle_hashes (Пул из ${puzzleHashesList.length} хэшей)`);
-
+  
     const nodeResponseData = await new Promise<ChiaRpcBalanceResult>((resolve, reject) => {
       const req = https.request("https://localhost:8555/get_coin_records_by_puzzle_hashes", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json", "Content-Length": Buffer.byteLength(rpcPayload, "utf8") }, agent, timeout: 15000 }, (res) => {
         const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(chunk));
@@ -139,8 +136,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
 
     const finalAddressesArray = Array.from(addressesMap.values());
-    console.log(`[CHIA MULTI-INDEX BALANCE] [SUCCESS] Общий баланс кошелька по 100 индексам: ${formatMojoToXch(totalWalletMojo)} XCH`);
-
+ 
     return {
       total_xch: formatMojoToXch(totalWalletMojo),
       total_mojo: totalWalletMojo.toString(),

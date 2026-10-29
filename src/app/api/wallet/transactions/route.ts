@@ -11,10 +11,10 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 interface ChiaCoinRecord {
   amount: number | string;
-  spent_block_index?: number;     
-  confirmed_block_index?: number; 
-  spent_height?: number;          
-  confirmed_height?: number;       
+  spent_block_index?: number;
+  confirmed_block_index?: number;
+  spent_height?: number;
+  confirmed_height?: number;
   spent: boolean;
   id?: string;
   timestamp?: number;
@@ -56,8 +56,6 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const publicKeyHex = searchParams.get("publicKeyHex");
 
-  console.log(`\n[CHIA MULTI-INDEX TX] ==========================================`);
-  console.log(`[CHIA MULTI-INDEX TX] [START] Запрос сквозной архивной истории операций по пулу из 100 индексов`);
 
   if (!publicKeyHex) {
     return NextResponse.json({ success: false, data: null, error: "publicKeyHex query parameter is required" }, { status: 400 });
@@ -67,7 +65,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
     const networkFolder = isTestnet ? "testnet11" : "mainnet";
     const homeDir = process.env.USERPROFILE || os.homedir() || process.env.HOME || "C:\\Users\\khatk";
-    
+
     let sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "full_node");
     let certPath = path.join(sslPath, "private_full_node.crt"), keyPath = path.join(sslPath, "private_full_node.key");
 
@@ -86,7 +84,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     for (let index = 0; index < 100; index++) {
       const pHash = generateContractPuzzleHash(publicKeyHex);
       const readableAddress = encodePuzzleHashToAddress(pHash, isTestnet);
-      
+
       if (!indexToHashMap.has(pHash)) {
         puzzleHashesList.push(pHash);
         indexToHashMap.set(pHash, { index, address: readableAddress });
@@ -95,7 +93,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     // include_spent_coins: true — заставляем ноду поднять архивные удаленные монеты для вывода исходящих трат (type 2)
     const rpcPayload = JSON.stringify({ puzzle_hashes: puzzleHashesList, include_spent_coins: true });
-    
+
     const nodeResponseData = await new Promise<ChiaRpcFullNodeResult>((resolve, reject) => {
       const req = https.request("https://localhost:8555/get_coin_records_by_puzzle_hashes", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json", "Content-Length": Buffer.byteLength(rpcPayload, "utf8") }, agent, timeout: 20000 }, (res) => {
         const chunks: Buffer[] = []; res.on("data", (chunk) => chunks.push(chunk));
@@ -156,7 +154,6 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     // Выстраиваем всю историю кошелька по хронологии от новых к старым
     finalHistory.sort((a, b) => b.confirmed_at_time - a.confirmed_at_time);
-    console.log(`[CHIA MULTI-INDEX TX] УСПЕХ -> Собрана сквозная архивная история из ${finalHistory.length} операций`);
     return finalHistory;
   });
 }

@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     const origin = request.nextUrl.origin;
     const balanceUrl = `${origin}/api/wallet/balance?publicKeyHex=${publicKeyHex}`;
     
-    console.log(`[PREPARE VIA BALANCE] Запрашиваем монеты из баланса для поиска самой крупной: ${balanceUrl}`);
+
     const balanceRes = await fetch(balanceUrl, { method: "GET" });
     const balanceData = await balanceRes.json();
 

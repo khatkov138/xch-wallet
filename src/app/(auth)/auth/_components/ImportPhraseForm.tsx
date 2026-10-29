@@ -1,30 +1,22 @@
 'use client'
 
-import React, { useState, useEffect } from "react"
+import React, { useState } from "react"
 import { ArrowRight, AlertCircle, Clipboard } from "lucide-react"
 import * as bip39 from "bip39"
-import { Button } from "../../../components/ui/button"
+import { Button } from "../../../../components/ui/button"
 
-interface ImportWalletFormProps {
-  seedPhrase: string
-  setSeedPhrase: (phrase: string) => void
+interface ImportPhraseFormProps {
   onSubmit: (phrase: string) => void
 }
 
-export function ImportWalletForm({ seedPhrase, setSeedPhrase, onSubmit }: ImportWalletFormProps) {
-  // Инициализируем локальный ввод из входящего пропса для сохранения состояния
-  const [rawInput, setRawInput] = useState<string>(seedPhrase)
+export function ImportPhraseForm({ onSubmit }: ImportPhraseFormProps) {
+  // Локальный стейт для ввода фразы
+  const [rawInput, setRawInput] = useState<string>("")
   
-  // Безопасно вытягиваем английский словарь BIP-39 без @ts-ignore
+  // Безопасно вытягиваем английский словарь BIP-39
   const bip39Wordlist = (bip39.wordlists as Record<string, string[]> | undefined)?.english || []
 
-  // Синхронизируем текстовое поле с родительским стейтом с очисткой дублирующихся пробелов
-  useEffect(() => {
-    const cleanPhrase = rawInput.trim().toLowerCase().replace(/\s+/g, " ")
-    setSeedPhrase(cleanPhrase)
-  }, [rawInput, setSeedPhrase])
-
-  // Безопасно формируем список слов, исключая пустые пробельные элементы
+  // Безопасно формируем список слов для валидации на лету
   const currentWordsList = rawInput.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const wordsCount = currentWordsList.length
   const hasExact24Words = wordsCount === 24
@@ -32,6 +24,13 @@ export function ImportWalletForm({ seedPhrase, setSeedPhrase, onSubmit }: Import
   // Проверяем, что каждое слово входит в официальный стандарт BIP-39
   const areAllWordsValid = hasExact24Words && currentWordsList.every(word => bip39Wordlist.includes(word))
   const isWalletReady = areAllWordsValid
+
+  // Финальная очистка строки перед отправкой наверх
+  const handleFormSubmit = () => {
+    if (!isWalletReady) return
+    const cleanPhrase = rawInput.trim().toLowerCase().replace(/\s+/g, " ")
+    onSubmit(cleanPhrase)
+  }
 
   return (
     <div className="space-y-4 flex flex-col justify-between h-full min-h-[360px]">
@@ -51,7 +50,7 @@ export function ImportWalletForm({ seedPhrase, setSeedPhrase, onSubmit }: Import
           {rawInput.trim() === "" 
             ? "Вставьте сид-фразу целиком (Ctrl + V). Требуется ровно 24 слова."
             : hasExact24Words 
-              ? (areAllWordsValid ? "Фраза полностью валидна. Можно импортировать сейф!" : "Ошибка: некоторые слова не входят в словарь BIP-39.") 
+              ? (areAllWordsValid ? "Фраза полностью валидна. Можно продолжить!" : "Ошибка: некоторые слова не входят в словарь BIP-39.") 
               : `Неверное количество слов. Сейчас введено: ${wordsCount} из 24.`}
         </span>
       </div>
@@ -76,7 +75,7 @@ export function ImportWalletForm({ seedPhrase, setSeedPhrase, onSubmit }: Import
 
       {/* Главная кнопка действия */}
       <Button 
-        onClick={() => onSubmit(seedPhrase)}
+        onClick={handleFormSubmit}
         disabled={!isWalletReady}
         className={`w-full font-bold text-sm h-12 rounded-xl transition-all border-none flex items-center justify-center gap-2 ${
           isWalletReady 
@@ -84,7 +83,7 @@ export function ImportWalletForm({ seedPhrase, setSeedPhrase, onSubmit }: Import
             : 'bg-zinc-900 text-zinc-600 cursor-not-allowed shadow-none'
         }`}
       >
-        <span>Импортировать кошелек</span>
+        <span>Импортировать фразу</span>
         <ArrowRight size={14} className={isWalletReady ? "text-[#FF2E93]" : "text-zinc-600"} />
       </Button>
     </div>

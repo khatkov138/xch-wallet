@@ -2,50 +2,25 @@
 
 import React from "react"
 import { RefreshCw } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
-import { handleApi } from "@/lib/utils"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
-
-interface IndexRecord { index: number; puzzle_hash: string; xch: string; mojo: string; coins: any[]; }
-interface MultiIndexBalanceData { total_xch: string; total_mojo: string; addresses: IndexRecord[]; }
+import { useWalletBalance } from "@/hooks/useWalletBalance"
 
 function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
-  if (!str.includes(".")) {
-    return `${str}.${"0".repeat(decimals)}`;
-  }
-  
+  if (!str.includes(".")) return `${str}.${"0".repeat(decimals)}`;
   const [integerPart, fractionalPart] = str.split(".");
-  const truncatedFraction = fractionalPart.slice(0, decimals);
-  
-  const paddedFraction = truncatedFraction.padEnd(decimals, "0");
-  
-  return `${integerPart}.${paddedFraction}`;
+  return `${integerPart}.${fractionalPart.slice(0, decimals).padEnd(decimals, "0")}`;
 }
 
 export function BalanceSection() {
-  // Достаем метод получения публичного ключа кошелька прямо из твоего хука авторизации
-  const { getUnhardenedPkHex } = useWalletAuth()
-  const walletPublicKeyHex = getUnhardenedPkHex()
+  // Просто вызываем наш чистый хук, никакой логики запросов внутри компонента!
+  const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletBalance()
 
-  const { data: balanceData, error: balanceError, refetch, isFetching } = useQuery<MultiIndexBalanceData>({
-    queryKey: ['walletBalance', walletPublicKeyHex],
-    queryFn: () => handleApi<MultiIndexBalanceData>(fetch(`/api/wallet/balance?publicKeyHex=${walletPublicKeyHex}`)),
-    enabled: !!walletPublicKeyHex,
-    refetchInterval: 10000,
-    staleTime: 5000,
-  })
-
-  const realXCHStr = balanceData?.total_xch ?? "0"
-
-  const balanceXCH = balanceError ? "0.0000" : formatStringBalance(realXCHStr, 4)
-  
-  const numericXCH = Number(realXCHStr)
-  const balanceUSD = balanceError
+  const balanceXCH = error ? "0.0000" : formatStringBalance(realXCHStr, 4)
+  const balanceUSD = error
     ? "⚠️ Ошибка: не удалось связаться с сервером"
     : `≈ $${(numericXCH * 2.00).toFixed(2)} USD`
 
-  const isError = balanceUSD.includes("Ошибка")
+  const isError = Boolean(error)
 
   return (
     <section className="text-center py-4 space-y-1 relative">

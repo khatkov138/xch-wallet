@@ -1,134 +1,196 @@
 'use client'
 
-import { useEffect, useCallback } from "react"
+import { useEffect, useCallback, useRef } from "react"
+import { useRouter, usePathname } from "next/navigation"
 import { useWalletStore } from "@/store/useWalletStore"
-import { runCryptoAudit } from "@/lib/crypto"
+import { runCryptoAudit, decryptMnemonic } from "@/lib/crypto"
 
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000
+const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 минут
 
 export function useWalletAuth() {
+  const router = useRouter()
+  const pathname = usePathname()
+
   const {
     walletAddress,
-    decryptedPhrase,
+    unhardenedPkHex,
     isScreenLocked,
     isVerifying,
     setWalletData,
-    lockWallet,
+    setScreenLocked,
     setVerifying,
-    setScreenLocked
+    clearStore
   } = useWalletStore()
 
-  const logCryptoAudit = useCallback((clearMnemonic: string) => {
-    return runCryptoAudit(clearMnemonic)
+  // Используем ref для таймаута, чтобы избежать лишних перезапусков эффекта
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Мгновенный геттер публичного ключа для TanStack Query
+  const getUnhardenedPkHex = useCallback((): string | null => {
+    return unhardenedPkHex || null
+  }, [unhardenedPkHex])
+
+  /**
+   * 🔑 Получение приватного ключа по ПИН-коду "на лету" для подписи транзакций
+   */
+  const getSkHexByPin = useCallback(async (pin: string): Promise<string> => {
+    if (typeof window === 'undefined') throw new Error("Среда выполнения не определена")
+
+    const encryptedMnemonic = localStorage.getItem("xcha_mnemonic")
+    // Проверка на случай, если localStorage еще содержит флаг 'true' вместо зашифрованной строки
+    if (!encryptedMnemonic || encryptedMnemonic === "true") {
+      throw new Error("Кошелек не зашифрован или не найден в хранилище")
+    }
+
+    try {
+      // 1. Расшифровываем мнемонику с помощью введенного ПИН-кода
+      const clearMnemonic = await decryptMnemonic(encryptedMnemonic, pin)
+
+      // 2. Запускаем аудит для получения дерева ключей
+      const auditJson = runCryptoAudit(clearMnemonic)
+      if (!auditJson) throw new Error("Не удалось恢复ключи")
+
+      const auditData = JSON.parse(auditJson)
+
+      // Возвращаем hardened приватный ключ кошелька для подписи
+      return auditData.wallet_sk_hardened_hex
+    } catch (error) {
+      throw new Error("Неверный ПИН-код или поврежденные данные")
+    }
   }, [])
 
-  const getUnhardenedPkHex = useCallback((): string | null => {
-    if (!decryptedPhrase) return null
-    const auditJson = runCryptoAudit(decryptedPhrase)
-    if (!auditJson) return null
-    try {
-      return JSON.parse(auditJson).unhardened_wallet_pk_hex || null
-    } catch {
-      return null
-    }
-  }, [decryptedPhrase])
-
-  const getUnhardenedSkHex = useCallback((): string | null => {
-    if (!decryptedPhrase) return null
-    const auditJson = runCryptoAudit(decryptedPhrase)
-    if (!auditJson) return null
-    try {
-      return JSON.parse(auditJson).wallet_sk_hardened_hex || null
-    } catch {
-      return null
-    }
-  }, [decryptedPhrase])
-
+  /**
+   * 🎉 Централизованный метод успешного входа (вызывается из EncryptPhraseForm или формы разблокировки)
+   */
   const handleUnlockSuccess = useCallback(async (clearMnemonic: string) => {
     try {
       const auditJson = runCryptoAudit(clearMnemonic)
       if (!auditJson) throw new Error("Критический сбой аудита ключей")
-
       const auditData = JSON.parse(auditJson)
-
-      console.log(
-        `%c🔑 [XCHA CRYPTO AUDIT RESULT]\n` +
-        `----------------------------------------\n` +
-        `📝 Мнемоника:          "${auditData.mnemonic}"\n` +
-        `🔑 Master SK Hex:       ${auditData.master_sk_hex}\n` +
-        `🔑 Master PK Hex:       ${auditData.master_pk_hex}\n` +
-        `🆔 Fingerprint:         ${auditData.fingerprint}\n` +
-        `🚜 Farmer PK Hex:       ${auditData.farmer_pk_hex}\n` +
-        `🌊 Pool PK Hex:         ${auditData.pool_pk_hex}\n` +
-        `🔒 Canonical Wallet SK: ${auditData.wallet_sk_hardened_hex} (Используем для Шага 3)\n` +
-        `🚀 Canonical Wallet PK: ${auditData.unhardened_wallet_pk_hex} (Отправляем на бэкенд)\n` +
-        `🏠 Смарт-контракт:      ${auditData.contract_address} (Рассчитан локально)\n` +
-        `----------------------------------------`,
-        "color: #8B5CF6; font-weight: bold; font-family: monospace;"
-      )
-
-      const targetAddress = auditData.contract_address
-      if (!targetAddress) throw new Error("Адрес смарт-контракта отсутствует в результатах аудита")
 
       if (typeof window !== 'undefined') {
         sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
       }
 
-      // Записываем локально вычисленный адрес и фразу в стейт без сетевых запросов
-      setWalletData(targetAddress, clearMnemonic.trim())
+      // Записываем только публичные данные в Zustand (Приватный ключ НЕ храним в памяти!)
+      setWalletData(auditData.contract_address, auditData.unhardened_wallet_pk_hex)
       setScreenLocked(false)
-
-    } catch (error: any) {
+    } catch (error) {
       console.error("❌ Ошибка авторизации:", error)
-      alert(`Ошибка авторизации: ${error.message || error}`)
+      throw error
     }
   }, [setWalletData, setScreenLocked])
 
+  /**
+   * 🔒 Блокировка кошелька (очистка сессии и Zustand)
+   */
+  const lockWallet = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem("xcha_session_expires")
+    }
+    clearStore()
+  }, [clearStore])
+
+  /**
+   * 🔄 🔥 НОВЫЙ ВНУТРЕННИЙ МЕТОД: Валидация и разблокировка для UnlockPinForm
+   * Достает данные, расшифровывает, проверяет на 24 слова и вызывает handleUnlockSuccess
+   */
+  const unlockWalletByPin = useCallback(async (pin: string): Promise<void> => {
+    if (typeof window === 'undefined') throw new Error("Среда выполнения не определена")
+
+    const encryptedData = localStorage.getItem("xcha_mnemonic") || ""
+    if (!encryptedData || encryptedData === "true") {
+      throw new Error("Кошелек не найден в хранилище")
+    }
+
+    // 1. Расшифровываем мнемонику
+    const decrypted = await decryptMnemonic(encryptedData, pin)
+    const cleanPhrase = decrypted.trim().toLowerCase().replace(/\s+/g, " ")
+
+    // 2. 🛡 ЖЕСТКИЙ ФИЛЬТР: Проверяем количество слов
+    const wordsCount = cleanPhrase.split(" ").filter(Boolean).length
+    if (wordsCount !== 24) {
+      throw new Error("Расшифрованная фраза повреждена или не содержит 24 слова")
+    }
+
+    // 3. Если всё ок — вызываем твой родной handleUnlockSuccess
+    await handleUnlockSuccess(cleanPhrase)
+  }, [handleUnlockSuccess])
+
+  /**
+   * 🔄 ЭФФЕКТ 1: Инициализация и проверка сессии при смене страниц
+   */
   useEffect(() => {
-    const initAuth = async () => {
-      if (typeof window === 'undefined') return
-      if (localStorage.getItem("xcha_is_auth") !== "true" || !localStorage.getItem("xcha_mnemonic")) {
-        window.location.href = "/"
-        return
-      }
-      const sessionExpires = sessionStorage.getItem("xcha_session_expires")
-      if (sessionExpires && Date.now() < parseInt(sessionExpires, 10) && walletAddress && decryptedPhrase) {
-        setScreenLocked(false)
-      } else {
+    if (typeof window === 'undefined') return
+
+    const hasMnemonic = localStorage.getItem("xcha_mnemonic")
+    const isAuthMark = localStorage.getItem("xcha_is_auth") === "true"
+
+    // ЕСЛИ КОШЕЛЬКА НЕТ: отправляем на страницу авторизации (но только если мы уже не там!)
+    if (!hasMnemonic || !isAuthMark) {
+      if (pathname !== "/auth") {
         lockWallet()
+        router.replace("/auth")
       }
       setVerifying(false)
+      return
     }
-    initAuth()
-  }, [walletAddress, decryptedPhrase, lockWallet, setVerifying, setScreenLocked])
 
+    // ЕСЛИ КОШЕЛЕК ЕСТЬ: проверяем сессию активности
+    const sessionExpires = sessionStorage.getItem("xcha_session_expires")
+    const isSessionValid = sessionExpires && Date.now() < parseInt(sessionExpires, 10)
+
+    if (isSessionValid && walletAddress && unhardenedPkHex) {
+      setScreenLocked(false)
+    } else {
+      // Сессия истекла или данных нет в Zustand -> включаем экран блокировки ПИН-кодом
+      setScreenLocked(true)
+    }
+
+    setVerifying(false)
+  }, [pathname, walletAddress, unhardenedPkHex, lockWallet, setScreenLocked, setVerifying, router])
+
+  /**
+   * ⏱ ЭФФЕКТ 2: Таймер автоблокировки по неактивности пользователя
+   */
   useEffect(() => {
-    if (isVerifying || isScreenLocked) return
-    let timeoutId: NodeJS.Timeout
+    // Если экран уже заблокирован или идет проверка, таймер не нужен
+    if (isVerifying || isScreenLocked || pathname === "/auth") return
+
     const resetTimer = () => {
       if (typeof window === 'undefined') return
-      clearTimeout(timeoutId)
+
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+
       sessionStorage.setItem("xcha_session_expires", (Date.now() + INACTIVITY_TIMEOUT).toString())
-      timeoutId = setTimeout(() => lockWallet(), INACTIVITY_TIMEOUT)
+
+      timeoutRef.current = setTimeout(() => {
+        lockWallet()
+      }, INACTIVITY_TIMEOUT)
     }
+
     const events = ["mousemove", "keydown", "touchstart", "click"]
     events.forEach(e => window.addEventListener(e, resetTimer))
+
+    // Инициализационный запуск таймера
     resetTimer()
+
     return () => {
-      clearTimeout(timeoutId)
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
       events.forEach(e => window.removeEventListener(e, resetTimer))
     }
-  }, [isVerifying, isScreenLocked, lockWallet])
+  }, [isVerifying, isScreenLocked, pathname, lockWallet])
+
+  
 
   return {
     walletAddress,
-    decryptedPhrase,
     isVerifying,
     isScreenLocked,
-    handleUnlockSuccess,
+    handleUnlockSuccess, // На месте для EncryptPhraseForm
     lockWallet,
-    logCryptoAudit,
     getUnhardenedPkHex,
-    getUnhardenedSkHex
+    getSkHexByPin,
+    unlockWalletByPin // На месте для UnlockPinForm
   }
 }

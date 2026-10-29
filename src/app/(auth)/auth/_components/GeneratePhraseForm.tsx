@@ -1,31 +1,40 @@
 'use client'
 
-import React from "react"
+import React, { useState, useEffect } from "react"
 import { ShieldCheck, RefreshCw, Check, ArrowRight, Printer } from "lucide-react"
+import * as bip39 from "bip39"
 
-import { PapperWalletPrintout } from "../../(dashboard)/dashboard/_components/PapperWalletPrintout"
-import { Button } from "../../../components/ui/button"
+import { PapperWalletPrintout } from "../../../(dashboard)/dashboard/_components/PapperWalletPrintout"
+import { Button } from "../../../../components/ui/button"
 
-interface CreateWalletFormProps {
-  generatedPhrase: string
-  isAgreed: boolean
-  setIsAgreed: (agreed: boolean) => void
-  onRegenerate: () => void
-  onSubmit: () => void
+interface GeneratePhraseFormProps {
+  onSubmit: (phrase: string) => void
 }
 
-export function CreateWalletForm({
-  generatedPhrase,
-  isAgreed,
-  setIsAgreed,
-  onRegenerate,
-  onSubmit
-}: CreateWalletFormProps) {
+export function GeneratePhraseForm({ onSubmit }: GeneratePhraseFormProps) {
+  // Локальные стейты формы генерации фразы
+  const [generatedPhrase, setGeneratedPhrase] = useState("")
+  const [isAgreed, setIsAgreed] = useState(false)
+
+  // Локальная генерация слов через bip39
+  const generateNewWalletWords = () => {
+    try {
+      const mnemonic = bip39.generateMnemonic(256)
+      setGeneratedPhrase(mnemonic)
+    } catch (e) {
+      setGeneratedPhrase("Ошибка инициализации bip39.")
+    }
+  }
+
+  // Генерируем фразу автоматически при монтировании формы
+  useEffect(() => {
+    generateNewWalletWords()
+  }, [])
 
   const wordsArray = generatedPhrase ? generatedPhrase.split(" ") : []
 
   const handleFormSubmit = () => {
-    if (!generatedPhrase) return
+    if (!generatedPhrase || generatedPhrase.startsWith("Ошибка")) return
     
     // Сигнализируем базовые флаги инициализации в localStorage
     if (typeof window !== 'undefined') {
@@ -33,7 +42,8 @@ export function CreateWalletForm({
       localStorage.setItem("xcha_is_auth", "true")
     }
     
-    onSubmit()
+    // Передаем сгенерированную фразу наверх в родительский обработчик
+    onSubmit(generatedPhrase)
   }
 
   return (
@@ -52,7 +62,7 @@ export function CreateWalletForm({
           </span>
           <button
             type="button"
-            onClick={onRegenerate}
+            onClick={generateNewWalletWords}
             className="text-zinc-400 hover:text-[#FF2E93] active:scale-95 transition-all p-1 rounded-lg hover:bg-zinc-900 cursor-pointer"
             title="Сгенерировать заново"
           >
@@ -116,7 +126,7 @@ export function CreateWalletForm({
           : 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
           }`}
       >
-        <span>Создать новый сейф</span>
+        <span>Продолжить к защите</span>
         <ArrowRight size={16} className={isAgreed ? "text-[#FF2E93]" : "text-zinc-600"} />
       </Button>
 

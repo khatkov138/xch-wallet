@@ -2,7 +2,8 @@
 
 import React from "react"
 import { LogOut } from "lucide-react"
-import { useWalletStore } from "@/store/useWalletStore"
+// ⚡ ЗАМЕНИЛИ СТОР НА НАШ УМНЫЙ ХУК-ФАСАД
+import { useWalletAuth } from "@/hooks/useWalletAuth"
 
 interface WalletHeaderProps {
   variant: "auth" | "dashboard"
@@ -10,40 +11,45 @@ interface WalletHeaderProps {
 }
 
 export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps) {
-  const { lockWallet } = useWalletStore()
+  // Достаем метод полной очистки сессии и блокировки из хука
+  const { lockWallet } = useWalletAuth()
+  
   const isDash = variant === "dashboard"
   const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
 
   const handleLogOut = () => {
-    // ИСПРАВЛЕНИЕ 1: Вместо localStorage.clear() удаляем строго маркеры кошелька,
-    // чтобы случайно не сбросить данные других скриптов на localhost:3000
+    // 1. Стираем секретный контейнер кошелька с диска
     if (typeof window !== 'undefined') {
       localStorage.removeItem("xcha_mnemonic")
       localStorage.removeItem("xcha_is_auth")
     }
     
-    // ИСПРАВЛЕНИЕ 2: Твой обновленный Zustand экшен lockWallet() 
-    // теперь сам внутри себя безопасно очищает xcha-wallet-session и xcha_session_pin
+    // 2. Вызываем метод из хука, который сам очистит Zustand-стор, 
+    // кэш ключей TanStack Query и все сессионные таймеры в sessionStorage
     lockWallet()
     
-    // Жесткий редирект на главную страницу авторизации
+    // 3. Жесткий редирект на главную страницу авторизации
     window.location.href = "/"
   }
 
   return (
     <header className="flex items-center justify-between w-full pt-2 select-none">
 
-      {/* ЛЕВАЯ КОЛОНКА: Одинаковый размер логотипа везде */}
+      {/* ЛЕВАЯ КОЛОНКА: Логотип и сеть */}
       <div className="flex items-center gap-2">
         <div className="relative flex items-center justify-center bg-white text-black font-black text-sm px-3.5 py-1.5 rounded-xl tracking-tight shadow-md">
           XCH<span className="text-[#FF2E93]">A</span>
-          <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF2E93] border border-zinc-950 ${isDash ? "animate-pulse" : ""
-            }`} />
+          <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF2E93] border border-zinc-950 ${
+            isDash ? "animate-pulse" : ""
+          }`} />
         </div>
 
         {isDash ? (
-          <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md border transition-all duration-300 ${isTestnet ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5" : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
-            }`}>
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md border transition-all duration-300 ${
+            isTestnet 
+              ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5" 
+              : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
+          }`}>
             {isTestnet ? "TESTNET 11" : "MAINNET"}
           </span>
         ) : (
@@ -53,7 +59,7 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
         )}
       </div>
 
-      {/* ПРАВАЯ КОЛОНКА */}
+      {/* ПРАВАЯ КОЛОНКА: Статус и выход */}
       {isDash ? (
         <div className="flex items-center gap-2">
           <div className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
