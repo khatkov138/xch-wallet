@@ -15,34 +15,56 @@ import { SendModal } from "./_components/SendModal"
 import { WalletLayout } from "@/components/WalletLayout"
 
 import { useWalletAuth } from "@/hooks/useWalletAuth"
+
+import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
 import { UnlockPinForm } from "./UnlockPinForm"
+import { useIdleTimer } from "@/hooks/useIdleTimer"
 
 export default function DashboardClient() {
   const router = useRouter()
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
   const [isSendOpen, setIsSendOpen] = useState(false)
-
-  // 🔥 Локальный предохранитель: пока не проверили роуты на клиенте — интерфейс заблокирован
   const [hasChecked, setHasChecked] = useState(false)
 
-  // Забираем готовые стейты и методы из твоего хука
-  const { isScreenLocked, isVerifying, checkInitialState } = useWalletAuth()
+  // 1. ДИСПЕТЧЕР (Только функции, стабильные ссылки, 0 ререндеров)
+  const { checkInitialState } = useWalletAuth()
 
-  // Запускаем проверку роутов при монтировании строго на клиенте
+  // 2. ДАТЧИКИ (Точечные селекторы для реактивного UI)
+  const isScreenLocked = useWalletSession((state) => state.isScreenLocked)
+  const isVerifying = useWalletSession((state) => state.isVerifying)
+  const sessionHydrated = useWalletSession((state) => state._hasHydrated)
+  const secureHydrated = useSecureStorage((state) => state._hasHydrated)
+
+  // 3. АВТОМАТИЧЕСКИЙ ТРЕКЕР АКТИВНОСТИ (Уже внутри с троттлингом под капотом)
+  useIdleTimer()
+
+  // Первичный чек защищенных роутов после полной гидратации сторов
   useEffect(() => {
+    if (!sessionHydrated || !secureHydrated) return
+
     const state = checkInitialState()
-    
     if (state === "NO_WALLET") {
       router.push("/auth")
     } else {
-      // Железно подтверждаем, что проверка завершена и кошелек есть на устройстве
       setHasChecked(true)
     }
-  }, [checkInitialState, router])
+  }, [sessionHydrated, secureHydrated, checkInitialState, router])
 
-  // 🧱 ЭКРАН 1: Статус загрузки (Пока Zustand парсит память ИЛИ пока идет проверка роутов)
-  // 🛡️ ДОБАВЛЕНО `!hasChecked`: Теперь кошелек физически не сможет мелькнуть раньше времени
-  if (isVerifying || !hasChecked) {
+  // Периодический чек протухания сессии (раз в 5 сек вполне достаточно, без лавины вызовов)
+  useEffect(() => {
+    if (isScreenLocked || !hasChecked) return
+
+    const interval = setInterval(() => {
+      checkInitialState()
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [isScreenLocked, hasChecked, checkInitialState])
+
+  // Ждем пока Zustand подгрузит localStorage во избежание Hydration Mismatch
+  const isLoading = isVerifying || !hasChecked || !sessionHydrated || !secureHydrated
+
+  if (isLoading) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
         <div className="absolute w-[250px] h-[250px] bg-[#FF2E93]/10 blur-[80px] rounded-full animate-pulse pointer-events-none" />
@@ -57,7 +79,6 @@ export default function DashboardClient() {
     )
   }
 
-  // 🧱 ЭКРАН 2: Сейф закрыт (Кошелек есть, но сессия пустая)
   if (isScreenLocked) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
@@ -67,10 +88,8 @@ export default function DashboardClient() {
     )
   }
 
-  // 🧱 ЭКРАН 3: Основной рабочий интерфейс дашборда
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 text-white font-sans antialiased overflow-hidden flex flex-col justify-between">
-      {/* Декоративные блюр-споты */}
       <div className="absolute top-[-10%] right-[-20%] w-[130%] h-[50vh] bg-gradient-to-bl from-[#B82EFF]/15 via-[#FF2E93]/5 to-transparent blur-[130px] pointer-events-none z-0" />
       <div className="absolute bottom-[-20%] left-[-10%] w-[80vw] h-[50vh] bg-[#FF2E93]/5 blur-[120px] pointer-events-none z-0" />
 
@@ -87,7 +106,6 @@ export default function DashboardClient() {
         </div>
       </WalletLayout>
 
-      {/* Модалки */}
       <ReceiveModal isOpen={isReceiveOpen} onClose={() => setIsReceiveOpen(false)} />
       <SendModal isOpen={isSendOpen} onClose={() => setIsSendOpen(false)} />
     </div>

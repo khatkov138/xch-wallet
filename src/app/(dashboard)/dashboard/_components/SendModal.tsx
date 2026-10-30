@@ -3,28 +3,19 @@
 import React, { useState, useEffect } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-
-
 import bip39 from 'bip39'
 import chiaBls from 'chia-bls'
-
 import { useWalletSession } from "@/store/useWalletStore"
+import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { chiaDeriveChildSkUnhardened } from "@/utils/crypto"
 
-const { PrivateKey } = chiaBls;
-
-// ЖЕСТКИЙ ХАРДКОД ТВОЕЙ ТЕСТОВОЙ МНЕМОНИКИ
-const HARDCODED_MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden";
-
-
-
+const { PrivateKey } = chiaBls
 
 export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
-  const [customFeeMojo, setCustomFeeMojo] = useState("5000000") // 5M mojo дефолт
+  const [customFeeMojo, setCustomFeeMojo] = useState("5000000")
   const [pin, setPin] = useState("")
   const [pinAttempts, setPinAttempts] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -32,10 +23,16 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
   const [debugJsonString, setDebugJsonString] = useState("")
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
 
-  // ЮЗАЕМ НАШ ХУК: Автоматически достаем master_pk_hex из захардкоженной мнемоники
-  const { unhardenedPkHex: masterPkHex } = useWalletSession()
+  // 🎯 ИСПОЛЬЗУЕМ ХУКИ: Диспетчер для подписи и Датчик для публичного ключа
+  const { getMnemonicForSigning } = useWalletAuth()
+  const masterPkHex = useWalletSession((state) => state.unhardenedPkHex)
 
-  useEffect(() => { if (!isOpen) { setPin(""); setStep(1); setStatusMessage(""); setDebugJsonString(""); setPreparedSpendData(null); setPinAttempts(0); } }, [isOpen])
+  useEffect(() => {
+    if (!isOpen) {
+      setPin(""); setStep(1); setStatusMessage(""); setDebugJsonString(""); setPreparedSpendData(null); setPinAttempts(0)
+    }
+  }, [isOpen])
+
   if (!isOpen) return null
 
   const getFeeInXchString = () => {
@@ -44,15 +41,17 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); if (loading) return
+    e.preventDefault()
+    if (loading) return
 
-    // --- ШАГ 1: Поиск монет и сборка бандла по masterPkHex из хука ---
+    // --- ШАГ 1: Поиск монет и сборка бандла на бэкенде ---
     if (step === 1) {
       if (!targetAddress || !amount) return
       setLoading(true); setStatusMessage(""); setDebugJsonString("")
       try {
-        if (!masterPkHex) throw new Error("Хук еще не вычислил публичный ключ")
-        const xch = parseFloat(amount.trim().replace(",", ".")); if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
+        if (!masterPkHex) throw new Error("Сессия не найдена")
+        const xch = parseFloat(amount.trim().replace(",", "."))
+        if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
 
         setStatusMessage("⏳ Поиск монет на контракте...")
 
@@ -60,19 +59,19 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            master_pk_hex: masterPkHex, // Передаем PK из хука
+            master_pk_hex: masterPkHex,
             send_to_address: targetAddress.trim(),
             mojos_to_send: Math.round(xch * 1_000_000_000_000),
             fee_mojos: parseInt(customFeeMojo.trim() || "0", 10)
           })
         })
 
-        const result = await res.json();
+        const result = await res.json()
         setDebugJsonString(JSON.stringify(result, null, 2))
 
         if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить трату")
 
-        setPreparedSpendData(result);
+        setPreparedSpendData(result)
         setStep(2)
         setStatusMessage("")
       } catch (err: any) {
@@ -80,27 +79,34 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
       } finally {
         setLoading(false)
       }
-      // --- ШАГ 2: Локальная деривация захардкоженной фразы и отправка на пуш ---
+
+      // --- ШАГ 2: Ввод ПИН, безопасное получение фразы, деривация и отправка ---
     } else {
-      if (!preparedSpendData?.message_to_sign_hex || !pin) return
+   
+      if (preparedSpendData?.target_wallet_index === undefined || preparedSpendData?.target_wallet_index === null || !pin) return
+    
       if (pin.length !== 6) return setStatusMessage("❌ ПИН-код должен состоять из 6 цифр")
 
-      setLoading(true); setStatusMessage("");
+      setLoading(true); setStatusMessage("")
       try {
-        setStatusMessage("🔐 Локальное подписание...")
+        setStatusMessage("🔐 Авторизация контракта и подписание...")
 
-        // Восстанавливаем seed из захардкоженной мнемоники напрямую
-        const seed = bip39.mnemonicToSeedSync(HARDCODED_MNEMONIC.trim());
-        const masterSk = PrivateKey.fromSeed(seed);
+        // Вызываем изолированный метод, который не дергает глобальную загрузку кошелька
+        const clearMnemonic = await getMnemonicForSigning(pin)
 
-        let walletBranchSk = masterSk;
-        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 12381);
-        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 8444);
-        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 2);
+        // Восстанавливаем приватный мастер-ключ
+        const seed = bip39.mnemonicToSeedSync(clearMnemonic.trim())
+        const masterSk = PrivateKey.fromSeed(seed)
 
-        // Динамический индекс от Питона (хоть 0, хоть 170)
-        const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, preparedSpendData.target_wallet_index);
-        const childSkHex = Buffer.from(targetSk.toBytes()).toString('hex');
+        // Деривация стандартной некостодиальной ветки Chia
+        let walletBranchSk = masterSk
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 12381)
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 8444)
+        walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 2)
+
+        // Получаем приватник нужного индекса от бэкенда
+        const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, preparedSpendData.target_wallet_index)
+        const childSkHex = Buffer.from(targetSk.toBytes()).toString('hex')
 
         setStatusMessage("🚀 Отправка пакета трат в сеть...")
 
@@ -116,21 +122,27 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           })
         })
 
-        const result = await res.json();
+        const result = await res.json()
         setDebugJsonString(JSON.stringify(result, null, 2))
 
         if (!res.ok || !result.success) throw new Error(result.detail || "Нода отклонила транзакцию")
 
-        setStatusMessage("🎉 Успешно! Монеты отправлены!");
-        setPin("");
-        setPinAttempts(0);
+        setStatusMessage("🎉 Успешно! Монеты отправлены!")
+        setPin(""); setPinAttempts(0)
       } catch (err: any) {
-        const nextAttempts = pinAttempts + 1; setPinAttempts(nextAttempts); setPin("");
-        if (nextAttempts >= 3) { onClose(); }
-        else setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось: ${3 - nextAttempts}\n${err.message || err}`)
-      } finally { setLoading(false) }
+        const nextAttempts = pinAttempts + 1
+        setPinAttempts(nextAttempts); setPin("")
+        if (nextAttempts >= 3) {
+          onClose()
+        } else {
+          setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось попыток: ${3 - nextAttempts}\n${err.message || err}`)
+        }
+      } finally {
+        setLoading(false)
+      }
     }
   }
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

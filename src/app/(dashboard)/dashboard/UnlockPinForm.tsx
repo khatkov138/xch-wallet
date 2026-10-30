@@ -1,63 +1,64 @@
 'use client'
 
 import React, { useState } from "react"
+import { useRouter } from "next/navigation"
 import { PinCodeLayout } from "@/components/PinCodeLayout"
-import { useWalletAuth } from "@/hooks/useWalletAuth" // Наш единственный хук
+import { useWalletAuth } from "@/hooks/useWalletAuth"
+import { useWalletSession } from "@/store/useWalletStore"
 
 export function UnlockPinForm() {
-  // 🎯 Забираем метод входа и метод ПОЛНОГО жесткого сброса кошелька строго из хука
+  const router = useRouter()
+  
+  // 1. ДИСПЕТЧЕР (Только экшены, 0 ререндеров)
   const { unlockWithPin, hardResetWallet } = useWalletAuth()
 
+  // 2. ДАТЧИК (Реактивная крутилка из стора вместо локального isLocked)
+  const isVerifying = useWalletSession((state) => state.isVerifying)
+
+  //Локальные стейты только для визуальных эффектов анимации
   const [shake, setShake] = useState(false)
   const [isError, setIsError] = useState(false)
-  const [isLocked, setIsLocked] = useState(false)
-  const [subtitle, setSubtitle] = useState("Введи ПИН-код для подтверждения сессии и защиты ваших активов")
+  const [subtitle, setSubtitle] = useState("Введи ПИН-код для подтверждения сессии и защиты активов")
 
-  // Полный сброс кошелька через хук диспетчера
   const handleResetWallet = () => {
-    if (confirm("Вы уверены? Это полностью сотрет кошелек с этого устройства!")) {
-      // Хук под капотом сам очистит и localStorage, и sessionStorage
-      hardResetWallet() 
-      
-      // Перенаправляем на страницу авторизации/создания
-      window.location.href = "/auth"
-    }
+    hardResetWallet()
+    router.push("/auth")
   }
 
   const handlePinComplete = async (pin: string, clearPin: () => void) => {
-    setIsLocked(true)
-
-    // Небольшая задержка для плавности анимации ввода последней цифры
-    await new Promise(resolve => setTimeout(resolve, 300))
-
     try {
-      // Вызываем твой рабочий метод из хука
+      setIsError(false)
+      setSubtitle("Проверяем ПИН-код...")
+      
       await unlockWithPin(pin)
+      
+      // При успешном входе Zustand сменит `isScreenLocked`, и DashboardClient сам размонтирует эту форму
     } catch (e) {
-      console.error("❌ Ошибка разблокировки экрана через хук:", e)
+      console.error("❌ Ошибка разблокировки:", e)
 
+      // Включаем анимацию тряски и ошибку
       setIsError(true)
       setShake(true)
       setSubtitle("Неверный ПИН-код! Попробуй еще раз")
+      clearPin()
 
-      setTimeout(() => setShake(false), 300)
-      setTimeout(() => {
-        setIsError(false)
-        setIsLocked(false)
-        clearPin()
-        setSubtitle("Введи ПИН-код для подтверждения сессии и защиты ваших активов")
-      }, 1200)
+      // Для сброса анимации тряски используем нативное событие окончания анимации (onAnimationEnd) 
+      // или декларативный сброс, но здесь для сброса класса эффекта достаточно переключить стейт назад
     }
   }
 
   return (
     <div className="fixed inset-0 z-50 bg-zinc-950/80 backdrop-blur-xl flex flex-col items-center justify-center p-6 select-none animate-in fade-in duration-300">
-      <div className="h-[480px] w-full">
+      <div 
+        className="h-[480px] w-full"
+        // 🛡️ Чистый сброс анимации тряски без setTimeout: как только она отработала, убираем класс
+        onAnimationEnd={() => setShake(false)} 
+      >
         <PinCodeLayout
           title="Сейф закрыт"
           subtitle={subtitle}
           isError={isError}
-          isLocked={isLocked}
+          isLocked={isVerifying} // Используем глобальный статус верификации из стора
           shake={shake}
           onPinComplete={handlePinComplete}
           footer={

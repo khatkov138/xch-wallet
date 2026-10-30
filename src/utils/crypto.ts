@@ -3,9 +3,10 @@ import bip39 from 'bip39';
 import chiaBls from 'chia-bls';
 import { sha256 } from '@noble/hashes/sha2'
 
-const { PrivateKey } = chiaBls;
-
 const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
+
+
+const { PrivateKey } = chiaBls;
 
 
 
@@ -165,6 +166,9 @@ export async function deriveMasterPublicKey(mnemonic: string): Promise<string> {
     // 3. Извлекаем чистую G1 точку (строку Master Public Key)
     return masterSk.getG1().toHex();
 }
+
+
+
 
 export function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
   const parentPkBytes = parentSk.getG1().toBytes();

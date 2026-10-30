@@ -4,101 +4,99 @@ import { useCallback } from "react"
 import { useSecureStorage, useWalletSession } from "@/store/useWalletStore"
 import { decryptMnemonic, deriveMasterPublicKey } from "@/utils/crypto"
 
-export function useWalletAuth() {
-  const isScreenLocked = useWalletSession((state) => state.isScreenLocked)
-  const isVerifying = useWalletSession((state) => state.isVerifying)
-  const unhardenedPkHex = useWalletSession((state) => state.unhardenedPkHex)
-  const hasWallet = useSecureStorage((state) => state.hasWallet)
+const SESSION_TIMEOUT = 15 * 60 * 1000 // 15 минут
 
+export function useWalletAuth() {
   const startSession = useWalletSession((state) => state.startSession)
+  const updateActivity = useWalletSession((state) => state.updateActivity)
+  const endSessionFromStore = useWalletSession((state) => state.endSession)
   const setVerifying = useWalletSession((state) => state.setVerifying)
   const setScreenLocked = useWalletSession((state) => state.setScreenLocked)
-  const endSession = useWalletSession((state) => state.endSession)
-  
-  // 🔥 Достаем метод удаления кошелька с диска
+
   const deleteWallet = useSecureStorage((state) => state.deleteWallet)
 
-  /**
-   * 1. ВХОД С ЧИСТОЙ ФРАЗОЙ
-   */
+  const endSession = useCallback(() => {
+    endSessionFromStore()
+  }, [endSessionFromStore])
+
+  const hardResetWallet = useCallback(() => {
+    deleteWallet()
+    endSessionFromStore()
+  }, [deleteWallet, endSessionFromStore])
+
   const loginWithClearMnemonic = useCallback(async (clearMnemonic: string) => {
     try {
       setVerifying(true)
       const pubKey = await deriveMasterPublicKey(clearMnemonic)
-      startSession(pubKey)
-    } catch (error: any) {
-      console.error("❌ Ошибка при создании сессии:", error)
-      throw new Error(error.message || "Не удалось запустить сессию кошелька")
+      startSession(pubKey, SESSION_TIMEOUT)
     } finally {
       setVerifying(false)
     }
   }, [startSession, setVerifying])
 
   /**
-   * 2. РАСШИФРОВКА И ВХОД ПО ПИНУ
+   * 🛡️ МЕТОД 1: Только для разблокировки экрана приложения
    */
   const unlockWithPin = useCallback(async (pinCode: string): Promise<boolean> => {
+    setVerifying(true)
     try {
-      setVerifying(true)
       const { hasWallet: diskHasWallet, encryptedMnemonic } = useSecureStorage.getState()
-
-      if (!diskHasWallet || !encryptedMnemonic) {
-        throw new Error("Кошелек не найден на этом устройстве")
-      }
+      if (!diskHasWallet || !encryptedMnemonic) throw new Error("WALLET_NOT_FOUND")
 
       const clearMnemonic = await decryptMnemonic(encryptedMnemonic, pinCode)
-      await loginWithClearMnemonic(clearMnemonic)
+      const pubKey = await deriveMasterPublicKey(clearMnemonic)
+
+      startSession(pubKey, SESSION_TIMEOUT)
       return true
-    } catch (error: any) {
-      console.error("❌ Ошибка разблокировки:", error.message)
-      throw error 
     } finally {
       setVerifying(false)
     }
-  }, [loginWithClearMnemonic, setVerifying])
+  }, [startSession, setVerifying])
 
   /**
-   * 3. ГЛОБАЛЬНАЯ ПРОВЕРКА СОСТОЯНИЯ
+   * 🔐 МЕТОД 2: Изолированное получение фразы для подписи транзакций
+   * Не дергает глобальные лоадеры, не вызывает побочных эффектов на Дашборде
    */
+  const getMnemonicForSigning = useCallback(async (pinCode: string): Promise<string> => {
+    const { hasWallet: diskHasWallet, encryptedMnemonic } = useSecureStorage.getState()
+    if (!diskHasWallet || !encryptedMnemonic) throw new Error("WALLET_NOT_FOUND")
+
+    return await decryptMnemonic(encryptedMnemonic, pinCode)
+  }, [])
+
   const checkInitialState = useCallback(() => {
     const { hasWallet: diskHasWallet } = useSecureStorage.getState()
-    const { unhardenedPkHex: activePkHex } = useWalletSession.getState()
+    const { unhardenedPkHex: activePkHex, expiresAt } = useWalletSession.getState()
 
     if (!diskHasWallet) {
       setScreenLocked(false)
-      setVerifying(false) 
+      setVerifying(false)
       return "NO_WALLET"
     }
 
-    if (!activePkHex) {
-      setScreenLocked(true) 
-      setVerifying(false)   
+    if (!activePkHex || !expiresAt) {
+      setScreenLocked(true)
+      setVerifying(false)
+      return "NEED_UNLOCK"
+    }
+
+    if (Date.now() > expiresAt + 2000) {
+      endSessionFromStore()
       return "NEED_UNLOCK"
     }
 
     setScreenLocked(false)
-    setVerifying(false) 
+    setVerifying(false)
     return "AUTHORIZED"
-  }, [setVerifying, setScreenLocked])
-
-  /**
-   * 4. 🔥 ПОЛНЫЙ СБРОС С КЛИЕНТА (Методы сторов вызываются только тут)
-   */
-  const hardResetWallet = useCallback(() => {
-    deleteWallet() // Стираем зашифрованную фразу с диска (localStorage)
-    endSession()   // Обнуляем оперативку активной сессии (sessionStorage)
-  }, [deleteWallet, endSession])
+  }, [setScreenLocked, setVerifying, endSessionFromStore])
 
   return {
     loginWithClearMnemonic,
     unlockWithPin,
+    getMnemonicForSigning, // Новый чистый метод
     checkInitialState,
     endSession,
-    hardResetWallet, // 👈 Отдаем наружу одну готовую функцию полного сброса
-    
-    hasWallet,
-    isScreenLocked,
-    isVerifying,
-    unhardenedPkHex
+    hardResetWallet,
+    updateSessionTimer: useCallback(() => updateActivity(SESSION_TIMEOUT), [updateActivity])
   }
 }

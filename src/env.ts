@@ -1,5 +1,5 @@
 // Внутри src/env.ts
-import { z } from "zod";
+/*import { z } from "zod";
 
 const envSchema = z.object({
   NEXT_PUBLIC_CONTRACT_HEX: z.string().min(1),
@@ -26,3 +26,4 @@ if (!parsed.success) {
 
 // 🔥 Строго экспортируем готовый объект
 export const env = parsed.data;
+*/
