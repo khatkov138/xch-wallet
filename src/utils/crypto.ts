@@ -247,3 +247,37 @@ export function signChiaTransaction({ mnemonic, walletIndex, messageHex, hiddenP
     // Возвращаем готовую шестнадцатеричную строку сигнатуры для бэкенда
     return Buffer.from(signature.toBytes()).toString('hex')
 }
+
+export function calculateChiaCoinId(parentHex: string, puzzleHashHex: string, amountMojo: number | bigint): string {
+  const cleanParent = parentHex.replace("0x", "").toLowerCase().trim();
+  const cleanPuzzle = puzzleHashHex.replace("0x", "").toLowerCase().trim();
+
+  const parentBytes = Uint8Array.from(cleanParent.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+  const puzzleBytes = Uint8Array.from(cleanPuzzle.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+  
+  // В Chia числа сериализуются как знаковые Big-Endian с минимальной длиной
+  let val = BigInt(amountMojo);
+  const amountArray: number[] = [];
+  
+  if (val === 0n) {
+    amountArray.push(0);
+  } else {
+    while (val > 0n) {
+      amountArray.unshift(Number(val & 0xffn));
+      val >>= 8n;
+    }
+    // Если старший бит равен 1, добавляем 00, чтобы число не считалось отрицательным в CLVM
+    if (amountArray[0] >= 0x80) {
+      amountArray.unshift(0);
+    }
+  }
+  const amountBytes = Uint8Array.from(amountArray);
+
+  // Склеиваем точный буфер
+  const concat = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
+  concat.set(parentBytes, 0);
+  concat.set(puzzleBytes, parentBytes.length);
+  concat.set(amountBytes, parentBytes.length + puzzleBytes.length);
+  
+  return Array.from(sha256(concat)).map(b => b.toString(16).padStart(2, '0')).join('');
+}

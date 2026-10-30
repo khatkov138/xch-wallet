@@ -1,18 +1,30 @@
 'use client'
 
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
+import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval'
 
-const dummyStorage = {
-  getItem: () => null,
-  setItem: () => {},
-  removeItem: () => {}
+// 🛡️ 1. КАСТОМНЫЙ ДВИЖОК ДЛЯ INDEXEDDB (Через idb-keyval)
+const indexedDBStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    return (await idbGet(name)) || null
+  },
+  setItem: async (name: string, value: string): Promise<void> => {
+    await idbSet(name, value)
+  },
+  removeItem: async (name: string): Promise<void> => {
+    await idbDel(name)
+  },
 }
 
-const getBrowserStorage = () => (typeof window !== 'undefined' ? localStorage : dummyStorage)
+// 🛡️ 2. БЕЗОПАСНЫЙ ВЫБОР ДЛЯ СЕССИИ (Используем sessionStorage вместо localStorage)
+// Если вкладку закроют — публичный ключ сессии сотрется сам автоматически!
+const dummyStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+const getSessionStorage = () => (typeof window !== 'undefined' ? sessionStorage : dummyStorage)
+
 
 // ==========================================
-// 1. SECURE STORAGE (Навсегда на диске)
+// 1. SECURE STORAGE (Внутри базы данных IndexedDB)
 // ==========================================
 interface SecureStorageState {
   encryptedMnemonic: string
@@ -44,14 +56,15 @@ export const useSecureStorage = create<SecureStorageState>()(
     }),
     {
       name: 'xcha-secure-vault',
-      storage: createJSONStorage(getBrowserStorage),
+      // СЮДА ДРОПАЕМ НАШ АСИНХРОННЫЙ INDEXEDDB СТОРАДЖ!
+      storage: createJSONStorage(() => indexedDBStorage), 
       onRehydrateStorage: (state) => () => state?.setHasHydrated(true)
     }
   )
 )
 
 // ==========================================
-// 2. WALLET SESSION (Реактивная сессия)
+// 2. WALLET SESSION (Реактивная сессия в sessionStorage)
 // ==========================================
 interface WalletSessionState {
   unhardenedPkHex: string
@@ -92,7 +105,6 @@ export const useWalletSession = create<WalletSessionState>()(
       },
 
       updateActivity: (timeoutMs) => {
-        // Обновляем таймер только если сессия реально активна
         if (!get().unhardenedPkHex) return
         const now = Date.now()
         set({
@@ -114,7 +126,8 @@ export const useWalletSession = create<WalletSessionState>()(
     }),
     {
       name: 'xcha-active-session',
-      storage: createJSONStorage(getBrowserStorage),
+      // Переводим сессию на sessionStorage: закрыл вкладку — сессии пиздец (это эталон безопасности)
+      storage: createJSONStorage(getSessionStorage), 
       onRehydrateStorage: (state) => () => state?.setHasHydrated(true)
     }
   )

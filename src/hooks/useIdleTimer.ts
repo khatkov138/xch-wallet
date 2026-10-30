@@ -14,6 +14,7 @@ export function useIdleTimer() {
   useEffect(() => {
     if (!unhardenedPkHex) return
 
+    // Обработчик обычных действий пользователя на странице
     const handleActivity = () => {
       const now = Date.now()
       if (now - lastSavedRef.current < THROTTLE_DELAY) return
@@ -28,9 +29,13 @@ export function useIdleTimer() {
     const pageEvents = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart']
     pageEvents.forEach(event => window.addEventListener(event, handleActivity, { passive: true }))
 
-    // 🛡️ СИСТЕМНЫЕ СОБЫТИЯ: спасают сессию, когда ты работаешь в DevTools или переключаешь вкладки
+    // 🛡️ СИСТЕМНЫЕ СОБЫТИЯ: Обновляем сессию ТОЛЬКО при реальном возврате в приложение
     const handleWindowFocus = () => {
-      // При фокусе на окно или возврате во вкладку сбрасываем троттлинг и принудительно обновляем
+      // Продлеваем сессию только если вкладка видима пользователю
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return // Если вкладка скрылась, уходим в фон молча, сессию НЕ продлеваем!
+      }
+      
       lastSavedRef.current = Date.now()
       updateSessionTimer()
     }
