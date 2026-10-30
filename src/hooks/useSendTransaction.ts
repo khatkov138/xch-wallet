@@ -2,7 +2,8 @@ import { useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { useWalletSession } from "@/store/useWalletStore"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
-import { signChiaTransaction, calculateChiaCoinId } from "@/utils/crypto"
+import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
+
 
 interface UseSendTransactionProps {
   targetAddress: string

@@ -1,6 +1,8 @@
+
 import { Suspense } from "react"
 import DashboardClient from "./DashboardClient"
 import { Loader2 } from "lucide-react"
+
 
 // Этот файл рендерится на сервере и создает правильную Suspense-границу
 export default function Page() {

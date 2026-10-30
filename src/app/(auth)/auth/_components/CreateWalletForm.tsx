@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation"
 import { PinCodeLayout } from "@/components/PinCodeLayout"
 import { useWalletAuth } from "@/hooks/useWalletAuth" 
 import { useSecureStorage } from "@/store/useWalletStore" 
-import { encryptMnemonic } from "@/utils/crypto" 
+import { encryptMnemonic } from "@/lib/utils/crypto" 
 
 interface EncryptPhraseFormProps {
   phraseToEncrypt: string

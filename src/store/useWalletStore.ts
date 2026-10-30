@@ -18,7 +18,6 @@ const indexedDBStorage: StateStorage = {
 }
 
 // 🛡️ 2. БЕЗОПАСНЫЙ ВЫБОР ДЛЯ СЕССИИ (Используем sessionStorage вместо localStorage)
-// Если вкладку закроют — публичный ключ сессии сотрется сам автоматически!
 const dummyStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
 const getSessionStorage = () => (typeof window !== 'undefined' ? sessionStorage : dummyStorage)
 
@@ -56,7 +55,6 @@ export const useSecureStorage = create<SecureStorageState>()(
     }),
     {
       name: 'xcha-secure-vault',
-      // СЮДА ДРОПАЕМ НАШ АСИНХРОННЫЙ INDEXEDDB СТОРАДЖ!
       storage: createJSONStorage(() => indexedDBStorage), 
       onRehydrateStorage: (state) => () => state?.setHasHydrated(true)
     }
@@ -72,12 +70,14 @@ interface WalletSessionState {
   isVerifying: boolean
   expiresAt: number | null
   lastActivityAt: number | null
+  activeIndexes: string // 🎯 Храним строку с живыми индексами балансов: "0,169,170"
   _hasHydrated: boolean
   setHasHydrated: (state: boolean) => void
   startSession: (pkHex: string, timeoutMs: number) => void
   updateActivity: (timeoutMs: number) => void
   setScreenLocked: (status: boolean) => void
   setVerifying: (status: boolean) => void
+  setActiveIndexes: (indexes: string) => void // 🎯 Экшен для обновления активных индексов
   endSession: () => void
 }
 
@@ -89,6 +89,7 @@ export const useWalletSession = create<WalletSessionState>()(
       isVerifying: true,    
       expiresAt: null,
       lastActivityAt: null,
+      activeIndexes: '', // 🎯 Инициализируем пустой строкой для Heavy-скана при первом запуске
       _hasHydrated: false,
 
       setHasHydrated: (state) => set({ _hasHydrated: state }),
@@ -100,7 +101,8 @@ export const useWalletSession = create<WalletSessionState>()(
           isScreenLocked: false,
           isVerifying: false,
           lastActivityAt: now,
-          expiresAt: now + timeoutMs
+          expiresAt: now + timeoutMs,
+          activeIndexes: '' // Сбрасываем при новом входе для полной синхронизации
         })
       },
 
@@ -116,17 +118,19 @@ export const useWalletSession = create<WalletSessionState>()(
       setScreenLocked: (status) => set({ isScreenLocked: status }),
       setVerifying: (status) => set({ isVerifying: status }),
       
+      setActiveIndexes: (indexes) => set({ activeIndexes: indexes }), // 🎯 Обновление стейта индексов
+      
       endSession: () => set({
         unhardenedPkHex: '',
         isScreenLocked: true,
         isVerifying: false,
         expiresAt: null,
-        lastActivityAt: null
+        lastActivityAt: null,
+        activeIndexes: '' // 🎯 Очищаем при выходе
       })
     }),
     {
       name: 'xcha-active-session',
-      // Переводим сессию на sessionStorage: закрыл вкладку — сессии пиздец (это эталон безопасности)
       storage: createJSONStorage(getSessionStorage), 
       onRehydrateStorage: (state) => () => state?.setHasHydrated(true)
     }

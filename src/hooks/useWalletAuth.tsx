@@ -2,7 +2,7 @@
 
 import { useCallback } from "react"
 import { useSecureStorage, useWalletSession } from "@/store/useWalletStore"
-import { decryptMnemonic, deriveMasterPublicKey } from "@/utils/crypto"
+import { decryptMnemonic, deriveMasterPublicKey } from "@/lib/utils/crypto"
 
 const SESSION_TIMEOUT = 15 * 60 * 1000 // 15 минут
 

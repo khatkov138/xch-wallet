@@ -96,7 +96,14 @@ async def send_tx(signature_hex: str = Body(..., embed=True), coin_spend: dict =
             push_res = (await c.post(f"{BASE_RPC_URL}/push_tx", json={"spend_bundle": sb_json})).json()
         
         if push_res.get("success"):
-            return {"success": True, "status": "tx_submitted", "tx_id": tx_id_hex, "push_response": push_res}
+            return {
+                "success": True, 
+                "status": "tx_submitted", 
+                "tx_id": tx_id_hex, 
+                "coin_id": coin_id_hex,  # 🎯 Добавили эту строчку!
+                "push_response": push_res
+            }
+
         return {"success": False, "error": push_res.get("error", "Unknown error")}
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))

@@ -4,25 +4,23 @@ import React from "react"
 import { RefreshCw } from "lucide-react"
 import { useWalletBalance } from "@/hooks/useWalletBalance"
 
-// Исправленная и безопасная функция форматирования — никогда не упадет в undefined
 function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
   if (!str.includes(".")) {
     return `${str}.${"0".repeat(decimals)}`;
   }
   const [integerPart, fractionalPart] = str.split(".");
-  // Добавлена проверка на существование дробной части (защита от undefined)
   const safeFractional = fractionalPart || "";
   return `${integerPart}.${safeFractional.slice(0, decimals).padEnd(decimals, "0")}`;
 }
 
 export function BalanceSection() {
-  // Вызываем наш чистый хук, никакой логики запросов внутри компонента!
+  // Хук берет данные из глобального кэша wallet-dashboard БЕЗ лишних сетевых вызовов
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletBalance()
 
   const balanceXCH = error ? "0.0000" : formatStringBalance(realXCHStr, 4)
   const balanceUSD = error
-    ? "⚠️ Ошибка: не удалось связаться с сервером"
+    ? "⚠️ Ошибка: не удалось обновить кэш"
     : `≈ $${(numericXCH * 2.00).toFixed(2)} USD`
 
   const isError = Boolean(error)
@@ -34,7 +32,8 @@ export function BalanceSection() {
         <span>Доступный баланс</span>
         <button
           onClick={() => refetch()}
-          className={`text-zinc-500 hover:text-white p-1 rounded transition-colors cursor-pointer ${
+          disabled={isFetching} // Жесткий блок спама кликами, пока идет сетевой запрос дашборда
+          className={`text-zinc-500 hover:text-white p-1 rounded transition-colors cursor-pointer disabled:pointer-events-none ${
             isFetching ? "animate-spin text-[#FF2E93]" : ""
           }`}
         >
