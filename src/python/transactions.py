@@ -19,8 +19,6 @@ async def build_spend_bundle(
 ):
     try:
         print("\n=== PYTHON: START BUILD BUNDLE ===", flush=True)
-        print(f"[PY] master_pk_hex input: {master_pk_hex}", flush=True)
-        
         required = mojos_to_send + fee_mojos
         cert, key = get_ssl_credentials()
         genesis = fetch_genesis(cert, key)
@@ -33,10 +31,6 @@ async def build_spend_bundle(
             ph = puzzle_for_pk(wallet_pk).get_tree_hash()
             puzzle_hashes_map[ph.hex()] = (idx, encode_puzzle_hash(ph, TESTNET_PREFIX), wallet_pk)
             
-            if idx < 5:
-                print(f"[PY_GEN_INDEX {idx}] -> wallet_pk: {bytes(wallet_pk).hex()} | puzzle_hash: 0x{ph.hex()}", flush=True)
-            
-        print(f"[PY] Отправка запроса в ноду для {len(puzzle_hashes_map)} хэшей...", flush=True)
         res = requests.post(
             f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
             json={"puzzle_hashes": list(puzzle_hashes_map.keys()), "include_spent_coins": False, "start_height": 0}, 
@@ -45,26 +39,27 @@ async def build_spend_bundle(
         ).json()
         
         coin_records = res.get("coin_records", [])
-        print(f"[PY] Нода вернула {len(coin_records)} незакрытых монет.", flush=True)
         
         best_coin, best_amt, best_idx = None, -1, -1
         
+        # 🎯 Сначала ищем подходящую монету СТРОГО на 0-м индексе
         for r in coin_records:
             c_data = r["coin"]
             amt, ph_clean = c_data["amount"], c_data["puzzle_hash"].replace("0x", "")
+            idx, _, wallet_pk = puzzle_hashes_map[ph_clean]
             
-            print(f"[PY_COIN_FOUND] Coin on PH: 0x{ph_clean} | Amount: {amt}", flush=True)
-            
-            if amt >= required and amt > best_amt:
+            if idx == 0 and amt >= required:
                 best_amt = amt
-                best_idx, _, wallet_pk = puzzle_hashes_map[ph_clean]
+                best_idx = idx
                 best_coin = Coin(bytes.fromhex(c_data["parent_coin_info"].replace("0x", "")), bytes.fromhex(ph_clean), amt)
-                    
+                break  # Нашли на 0 индексе — стоп, дальше не ищем!
+                
+        # Если на 0-м индексе ничего нет, кошелек выдаст ошибку, защищая от левых индексов
         if not best_coin: 
-            print("[PY_ERROR] Подходящих монет в ответе ноды не найдено!", flush=True)
-            raise HTTPException(status_code=400, detail="Нет монет для покрытия суммы + комиссии!")
+            print("[PY_ERROR] На 0-м индексе нет подходящих монет!", flush=True)
+            raise HTTPException(status_code=400, detail="На основном адресе (индекс 0) недостаточно монет!")
         
-        print(f"[PY_SUCCESS] Выбрана монета! Индекс: {best_idx} | Сумма: {best_amt}", flush=True)
+        print(f"[PY_SUCCESS] Принудительно выбрана монета 0 индекса! Сумма: {best_amt}", flush=True)
         _, _, wallet_pk = puzzle_hashes_map[best_coin.puzzle_hash.hex()]
         py_puzzle = puzzle_for_pk(wallet_pk)
         change = best_coin.amount - required
@@ -76,15 +71,16 @@ async def build_spend_bundle(
         py_sol = solution_for_conditions(PyProgram.to(conds))
         coin_spend = CoinSpend(best_coin, Program.from_bytes(bytes(py_puzzle)), Program.from_bytes(bytes(py_sol)))
         
-        # Формирование хэша сообщения под условия траты согласно консенсусу Chia
         msg = py_sol.rest().first().get_tree_hash() + best_coin.name() + genesis
         
-               # На бэкенде, в самом конце метода /build-spend-bundle:
         return {
             "success": True,
             "target_wallet_index": best_idx,
             "message_to_sign_hex": msg.hex(),
-            "hidden_puzzle_hash_hex": DEFAULT_HIDDEN_PUZZLE_HASH.hex(),  # 🔥 ОТДАЕМ ОРИГИНАЛЬНЫЙ ХЭШ С СЕРВЕРА
+            "hidden_puzzle_hash_hex": DEFAULT_HIDZEN_PUZZLE_HASH.hex() if 'DEFAULT_HIDZEN_PUZZLE_HASH' in globals() else DEFAULT_HIDDEN_PUZZLE_HASH.hex(),
+            "verified_target_address": send_to_address,
+            "verified_mojos_to_send": mojos_to_send,
+            "verified_coin_id_hex": best_coin.name().hex(),
             "coin_spend": {
                 "coin": {
                     "parent_coin_info": "0x" + coin_spend.coin.parent_coin_info.hex(), 
@@ -95,11 +91,9 @@ async def build_spend_bundle(
                 "solution": "0x" + bytes(coin_spend.solution).hex()
             }
         }
-
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
-# --- МЕТОД #2: ПРИЕМ ГОТОВОЙ СИГНАТУРЫ И МГНОВЕННЫЙ ПУШ В СЕТЬ ---
 # --- МЕТОД #2: ПРИЕМ ГОТОВОЙ СИГНАТУРЫ И МГНОВЕННЫЙ ПУШ В СЕТЬ ---
 @tx_router.post("/send-tx")
 async def send_tx(
@@ -110,14 +104,11 @@ async def send_tx(
         cert, key = get_ssl_credentials()
         clean_sig = signature_hex.replace("0x", "")
         
-        # 🛡️ СВЕРХНАДЁЖНЫЙ ПАРСИНГ: Извлекаем монету вне зависимости от того,
-        # завернул её фронтенд в поле "coin" или прислал плоским объектом.
         if "coin" in coin_spend:
             coin_source = coin_spend["coin"]
         else:
             coin_source = coin_spend
 
-        # Вытаскиваем Hex-строки и очищаем их от мусора
         p_coin_info = str(coin_source.get("parent_coin_info", "")).replace("0x", "").strip()
         p_hash = str(coin_source.get("puzzle_hash", "")).replace("0x", "").strip()
         amt = int(coin_source.get("amount", 0))
@@ -125,43 +116,23 @@ async def send_tx(
         p_reveal = str(coin_spend.get("puzzle_reveal", "")).replace("0x", "").strip()
         sol = str(coin_spend.get("solution", "")).replace("0x", "").strip()
 
-        # 🚨 ЖЕСТКИЙ ПРЕДОХРАНИТЕЛЬ: Проверяем длину строк до отправки в ноду,
-        # чтобы в консоли Python сразу было видно, если фронт прислал пустоту.
         if len(p_coin_info) != 64 or len(p_hash) != 64:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Критическая ошибка сериализации: неверная длина Hex! "
-                       f"parent_coin_info={len(p_coin_info)} симв., puzzle_hash={len(p_hash)} симв. "
-                       f"Ожидалось строго 64 символа."
-            )
+            raise HTTPException(status_code=400, detail="Критическая ошибка сериализации Hex!")
 
-        # Сборка финального SpendBundle для RPC-ноды Chia
         sb_json = {
             "coin_spends": [{
-                "coin": {
-                    "parent_coin_info": "0x" + p_coin_info, 
-                    "puzzle_hash": "0x" + p_hash, 
-                    "amount": amt
-                },
+                "coin": {"parent_coin_info": "0x" + p_coin_info, "puzzle_hash": "0x" + p_hash, "amount": amt},
                 "puzzle_reveal": "0x" + p_reveal,
                 "solution": "0x" + sol
             }],
             "aggregated_signature": "0x" + clean_sig
         }
 
-        print(f"[PY_RPC_SEND] Пушим spend_bundle в сеть Chia...", flush=True)
-        push_res = requests.post(
-            f"{BASE_RPC_URL}/push_tx", 
-            json={"spend_bundle": sb_json}, 
-            cert=(cert, key), 
-            verify=False
-        ).json()
+        print(f"[PY_RPC_SEND] Пушим spend_bundle...", flush=True)
+        push_res = requests.post(f"{BASE_RPC_URL}/push_tx", json={"spend_bundle": sb_json}, cert=(cert, key), verify=False).json()
         
         if not push_res.get("success"): 
-            error_msg = push_res.get("error", "Unknown node error")
-            raise HTTPException(status_code=400, detail=f"Нода отклонила транзакцию: {error_msg}")
+            return {"success": False, "error": push_res.get("error", "Unknown error")}
             
         return {"success": True, "status": "tx_submitted", "push_response": push_res}
-        
-    except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))

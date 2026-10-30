@@ -1,6 +1,6 @@
 
 import bip39 from 'bip39';
-import chiaBls from 'chia-bls';
+import chiaBls, { AugSchemeMPL } from 'chia-bls';
 import { sha256 } from '@noble/hashes/sha2'
 
 const { PrivateKey } = chiaBls
@@ -188,26 +188,62 @@ export function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
 }
 
 export function calculateSyntheticSecretKey(
-  targetSk: InstanceType<typeof PrivateKey>,
-  hiddenPuzzleHashHex: string // 🔥 Принимаем точный хэш с сервера
+    targetSk: InstanceType<typeof PrivateKey>,
+    hiddenPuzzleHashHex: string // 🔥 Принимаем точный хэш с сервера
 ): InstanceType<typeof PrivateKey> {
-  const targetPkBytes = targetSk.getG1().toBytes()
-  const hiddenPuzzleHashBytes = Buffer.from(hiddenPuzzleHashHex.replace("0x", ""), "hex")
-  
-  // Склеиваем байты публичного ключа и скрытого паззла (48 байт + 32 байта = 80 байт)
-  const concat = new Uint8Array(targetPkBytes.length + hiddenPuzzleHashBytes.length)
-  concat.set(targetPkBytes, 0)
-  concat.set(hiddenPuzzleHashBytes, targetPkBytes.length)
-  
-  // Хэшируем склеенный буфер через SHA-256
-  const offsetHashBytes = sha256(concat)
-  
-  // Переводим байты в BigInt криптографической длинной арифметики
-  const offsetBigInt = BigInt("0x" + Buffer.from(offsetHashBytes).toString("hex"))
-  const targetSkBigInt = BigInt("0x" + Buffer.from(targetSk.toBytes()).toString("hex"))
-  
-  // Сдвиг скаляров по модулю поля группы BLS12-381
-  const syntheticSkBigInt = (targetSkBigInt + offsetBigInt) % GROUP_ORDER
-  
-  return PrivateKey.fromHex(syntheticSkBigInt.toString(16).padStart(64, '0'))
+    const targetPkBytes = targetSk.getG1().toBytes()
+    const hiddenPuzzleHashBytes = Buffer.from(hiddenPuzzleHashHex.replace("0x", ""), "hex")
+
+    // Склеиваем байты публичного ключа и скрытого паззла (48 байт + 32 байта = 80 байт)
+    const concat = new Uint8Array(targetPkBytes.length + hiddenPuzzleHashBytes.length)
+    concat.set(targetPkBytes, 0)
+    concat.set(hiddenPuzzleHashBytes, targetPkBytes.length)
+
+    // Хэшируем склеенный буфер через SHA-256
+    const offsetHashBytes = sha256(concat)
+
+    // Переводим байты в BigInt криптографической длинной арифметики
+    const offsetBigInt = BigInt("0x" + Buffer.from(offsetHashBytes).toString("hex"))
+    const targetSkBigInt = BigInt("0x" + Buffer.from(targetSk.toBytes()).toString("hex"))
+
+    // Сдвиг скаляров по модулю поля группы BLS12-381
+    const syntheticSkBigInt = (targetSkBigInt + offsetBigInt) % GROUP_ORDER
+
+    return PrivateKey.fromHex(syntheticSkBigInt.toString(16).padStart(64, '0'))
+}
+
+
+interface SignParams {
+    mnemonic: string
+    walletIndex: number
+    messageHex: string
+    hiddenPuzzleHashHex: string
+}
+
+/**
+ * Безопасно деривирует некостодиальную ветку ключей Chia и генерирует валидную подпись транзакции
+ */
+export function signChiaTransaction({ mnemonic, walletIndex, messageHex, hiddenPuzzleHashHex }: SignParams): string {
+    // 1. Восстанавливаем приватный корень из сид-фразы
+    const seed = bip39.mnemonicToSeedSync(mnemonic.trim())
+    const masterSk = PrivateKey.fromSeed(seed)
+
+    // 2. Деривируем стандартную ветку кошелька Chia (m/12381/8444/2/) строго по уровням,
+    // чтобы избежать мутации ссылок на один и тот же приватник в JS-памяти
+    const lvl1 = chiaDeriveChildSkUnhardened(masterSk, 12381)
+    const lvl2 = chiaDeriveChildSkUnhardened(lvl1, 8444)
+    const walletBranchSk = chiaDeriveChildSkUnhardened(lvl2, 2)
+
+    // 3. Получаем приватный ключ для конкретного индекса монеты (в нашем случае принудительно 0)
+    const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, walletIndex)
+
+    // 4. Делаем криптографический сдвиг ключа под стандарт пазлов Chia (синтетический ключ)
+    const syntheticSk = calculateSyntheticSecretKey(targetSk, hiddenPuzzleHashHex)
+
+    // 5. Подписываем хэш сообщения через нативную схему AugSchemeMPL Chia
+    const messageBytes = Buffer.from(messageHex, 'hex')
+    const signature = AugSchemeMPL.sign(syntheticSk, messageBytes)
+
+    // Возвращаем готовую шестнадцатеричную строку сигнатуры для бэкенда
+    return Buffer.from(signature.toBytes()).toString('hex')
 }
