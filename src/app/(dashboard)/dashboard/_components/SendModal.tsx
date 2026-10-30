@@ -1,17 +1,23 @@
 'use client'
 
 import React, { useState, useEffect } from "react"
-import { X, Loader2 } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import bip39 from 'bip39'
 import chiaBls from 'chia-bls'
 import { useWalletSession } from "@/store/useWalletStore"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
-import { chiaDeriveChildSkUnhardened } from "@/utils/crypto"
+import { chiaDeriveChildSkUnhardened, calculateSyntheticSecretKey } from "@/utils/crypto"
+import { Button } from "@/components/ui/button"
+import { Loader2, X } from "lucide-react"
 
-const { PrivateKey } = chiaBls
+// Достаем структуры согласно спецификации node-chia-bls
+const { PrivateKey, AugSchemeMPL } = chiaBls
 
-export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+interface SendModalProps {
+  isOpen: boolean
+  onClose: () => void
+}
+
+export function SendModal({ isOpen, onClose }: SendModalProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
@@ -80,21 +86,20 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         setLoading(false)
       }
 
-      // --- ШАГ 2: Ввод ПИН, безопасное получение фразы, деривация и отправка ---
+      // --- ШАГ 2: Ввод ПИН, безопасная деривация и отправка подписи на бэк ---
     } else {
-   
-      if (preparedSpendData?.target_wallet_index === undefined || preparedSpendData?.target_wallet_index === null || !pin) return
-    
+      // 🛡️ Безопасная проверка индекса 0 через оператор нулевого слияния
+      if ((preparedSpendData?.target_wallet_index ?? null) === null || !pin) return
       if (pin.length !== 6) return setStatusMessage("❌ ПИН-код должен состоять из 6 цифр")
 
       setLoading(true); setStatusMessage("")
       try {
         setStatusMessage("🔐 Авторизация контракта и подписание...")
 
-        // Вызываем изолированный метод, который не дергает глобальную загрузку кошелька
+        // Получаем чистую фразу из изолированного метода
         const clearMnemonic = await getMnemonicForSigning(pin)
 
-        // Восстанавливаем приватный мастер-ключ
+        // Восстанавливаем приватный корень
         const seed = bip39.mnemonicToSeedSync(clearMnemonic.trim())
         const masterSk = PrivateKey.fromSeed(seed)
 
@@ -104,21 +109,57 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 8444)
         walletBranchSk = chiaDeriveChildSkUnhardened(walletBranchSk, 2)
 
-        // Получаем приватник нужного индекса от бэкенда
+        // Получаем приватник нужного индекса
         const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, preparedSpendData.target_wallet_index)
-        const childSkHex = Buffer.from(targetSk.toBytes()).toString('hex')
+
+        // Превращаем ключ в синтетический на фронтенде (криптографический сдвиг под Chia стандарт)
+        const syntheticSk = calculateSyntheticSecretKey(
+          targetSk,
+          preparedSpendData.hidden_puzzle_hash_hex // 🔥 Передаем хэш, прилетевший с бэка
+        )
+
+        // Подписываем через AugSchemeMPL
+        const messageBytes = Buffer.from(preparedSpendData.message_to_sign_hex, 'hex')
+        const signature = AugSchemeMPL.sign(syntheticSk, messageBytes)
+        const signatureHex = Buffer.from(signature.toBytes()).toString('hex')
+
+        // Подписываем хэш транзакции через нативную схему AugSchemeMPL
+
+
+        // ================= 🔬 КРИПТОГРАФИЧЕСКИЙ ДЕБАГ-ЦЕНТР =================
+        console.log("=== [FRONT] START CRYPTO DEBUG (INDEX 0) ===");
+        console.log("[FRONT] Master PK Hex (из стора):", masterPkHex);
+
+        // Проверяем публичный ключ ПЕРЕД синтетическим сдвигом (чистая деривация веток)
+        const targetPkHex = Buffer.from(targetSk.getG1().toBytes()).toString('hex');
+        console.log("[FRONT] Target PK Hex (индекс " + preparedSpendData.target_wallet_index + "):", targetPkHex);
+
+        // Проверяем публичный ключ ПОСЛЕ синтетического сдвига
+        const syntheticPkHex = Buffer.from(syntheticSk.getG1().toBytes()).toString('hex');
+        console.log("[FRONT] Synthetic PK Hex (готовый под паззл):", syntheticPkHex);
+        console.log("======================================================");
+
+
 
         setStatusMessage("🚀 Отправка пакета трат в сеть...")
+
+        // Явно собираем структуру, соответствующую ожиданиям бэкенда
+        const cleanCoinSpend = {
+          coin: {
+            parent_coin_info: preparedSpendData.coin_spend.coin.parent_coin_info,
+            puzzle_hash: preparedSpendData.coin_spend.coin.puzzle_hash,
+            amount: preparedSpendData.coin_spend.coin.amount
+          },
+          puzzle_reveal: preparedSpendData.coin_spend.puzzle_reveal,
+          solution: preparedSpendData.coin_spend.solution
+        }
 
         const res = await fetch("http://localhost:8000/api/v1/transactions/send-tx", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            master_pk_hex: masterPkHex,
-            child_sk_hex: childSkHex,
-            send_to_address: targetAddress.trim(),
-            mojos_to_send: Math.round(parseFloat(amount) * 1_000_000_000_000),
-            fee_mojos: parseInt(customFeeMojo.trim() || "0", 10)
+            signature_hex: signatureHex,
+            coin_spend: cleanCoinSpend // Отправляем идеально структурированный объект
           })
         })
 
@@ -143,7 +184,7 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
     }
   }
 
-
+  // Здесь возвращается твоя вёрстка без изменений...
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="relative w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-white shadow-2xl max-h-[95vh] overflow-y-auto">
@@ -202,5 +243,6 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         </form>
       </div>
     </div>
-  );
+  )
 }
+

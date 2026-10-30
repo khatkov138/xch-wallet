@@ -3,11 +3,10 @@ import bip39 from 'bip39';
 import chiaBls from 'chia-bls';
 import { sha256 } from '@noble/hashes/sha2'
 
-const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
+const { PrivateKey } = chiaBls
 
-
-const { PrivateKey } = chiaBls;
-
+// Железобетонная база: размер поля кривой BLS12-381
+const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n
 
 
 // Параметры для защиты от брутфорса (BIP-38 / PBKDF2 стандарты)
@@ -16,8 +15,10 @@ const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
 
 
+
+
 function intToBytes4(val: number): Uint8Array {
-  return new Uint8Array([(val >> 24) & 0xff, (val >> 16) & 0xff, (val >> 8) & 0xff, val & 0xff]);
+    return new Uint8Array([(val >> 24) & 0xff, (val >> 16) & 0xff, (val >> 8) & 0xff, val & 0xff]);
 }
 /**
  * Переводит массив байт (Uint8Array) в Hex-строку
@@ -26,6 +27,10 @@ function bytesToHex(bytes: Uint8Array): string {
     return Array.from(bytes)
         .map(b => b.toString(16).padStart(2, "0"))
         .join("");
+}
+function bytesToBigInt(bytes: Uint8Array | Buffer): bigint {
+    // Нативный и быстрый перевод байт-буфера в BigInt через Hex
+    return BigInt("0x" + Buffer.from(bytes).toString("hex"))
 }
 
 /**
@@ -171,13 +176,38 @@ export async function deriveMasterPublicKey(mnemonic: string): Promise<string> {
 
 
 export function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
-  const parentPkBytes = parentSk.getG1().toBytes();
-  const indexBytes = intToBytes4(index);
-  const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
-  concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
-  const hash = sha256(concat);
-  const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
-  const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
-  const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
-  return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
+    const parentPkBytes = parentSk.getG1().toBytes();
+    const indexBytes = intToBytes4(index);
+    const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
+    concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
+    const hash = sha256(concat);
+    const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
+    const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
+    const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
+    return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
+}
+
+export function calculateSyntheticSecretKey(
+  targetSk: InstanceType<typeof PrivateKey>,
+  hiddenPuzzleHashHex: string // 🔥 Принимаем точный хэш с сервера
+): InstanceType<typeof PrivateKey> {
+  const targetPkBytes = targetSk.getG1().toBytes()
+  const hiddenPuzzleHashBytes = Buffer.from(hiddenPuzzleHashHex.replace("0x", ""), "hex")
+  
+  // Склеиваем байты публичного ключа и скрытого паззла (48 байт + 32 байта = 80 байт)
+  const concat = new Uint8Array(targetPkBytes.length + hiddenPuzzleHashBytes.length)
+  concat.set(targetPkBytes, 0)
+  concat.set(hiddenPuzzleHashBytes, targetPkBytes.length)
+  
+  // Хэшируем склеенный буфер через SHA-256
+  const offsetHashBytes = sha256(concat)
+  
+  // Переводим байты в BigInt криптографической длинной арифметики
+  const offsetBigInt = BigInt("0x" + Buffer.from(offsetHashBytes).toString("hex"))
+  const targetSkBigInt = BigInt("0x" + Buffer.from(targetSk.toBytes()).toString("hex"))
+  
+  // Сдвиг скаляров по модулю поля группы BLS12-381
+  const syntheticSkBigInt = (targetSkBigInt + offsetBigInt) % GROUP_ORDER
+  
+  return PrivateKey.fromHex(syntheticSkBigInt.toString(16).padStart(64, '0'))
 }
