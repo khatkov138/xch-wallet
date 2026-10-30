@@ -2,29 +2,24 @@
 
 import React, { useState } from "react"
 import { PinCodeLayout } from "@/components/PinCodeLayout"
-import { useWalletAuth } from "@/hooks/useWalletAuth" // Твой понятный хук
-import { useSecureStorage, useWalletSession } from "@/store/useWalletStore" // Наши сторы
+import { useWalletAuth } from "@/hooks/useWalletAuth" // Наш единственный хук
 
-export function UnlockDashboardForm() {
-  // 1. Достаем метод разблокировки по ПИН-коду из хука
-  const { unlockWithPin } = useWalletAuth()
-  
-  // Достаем методы очистки для полного сброса кошелька
-  const vault = useSecureStorage()
-  const session = useWalletSession()
+export function UnlockPinForm() {
+  // 🎯 Забираем метод входа и метод ПОЛНОГО жесткого сброса кошелька строго из хука
+  const { unlockWithPin, hardResetWallet } = useWalletAuth()
 
   const [shake, setShake] = useState(false)
   const [isError, setIsError] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
   const [subtitle, setSubtitle] = useState("Введи ПИН-код для подтверждения сессии и защиты ваших активов")
 
-  // Сброс кошелька, если пользователь забыл ПИН-код (теперь красиво через Zustand)
+  // Полный сброс кошелька через хук диспетчера
   const handleResetWallet = () => {
     if (confirm("Вы уверены? Это полностью сотрет кошелек с этого устройства!")) {
-      vault.deleteWallet() // Стирает зашифрованную мнемонику из localStorage
-      session.endSession() // Очищает активную сессию из sessionStorage
+      // Хук под капотом сам очистит и localStorage, и sessionStorage
+      hardResetWallet() 
       
-      // Выкидываем на страницу авторизации/создания
+      // Перенаправляем на страницу авторизации/создания
       window.location.href = "/auth"
     }
   }
@@ -36,10 +31,8 @@ export function UnlockDashboardForm() {
     await new Promise(resolve => setTimeout(resolve, 300))
 
     try {
-      // 🔥 Вызываем единую бизнес-логику из хука. 
-      // Она сама расшифрует мнемонику, поднимет сессию в Zustand и закроет экран блокировки.
+      // Вызываем твой рабочий метод из хука
       await unlockWithPin(pin)
-      
     } catch (e) {
       console.error("❌ Ошибка разблокировки экрана через хук:", e)
 

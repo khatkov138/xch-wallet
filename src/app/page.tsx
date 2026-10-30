@@ -1,23 +1,28 @@
 'use client'
 
-import { useEffect } from "react"
+import React, { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2 } from "lucide-react"
 
+import { useWalletAuth } from "@/hooks/useWalletAuth" // Используем твой хук
+
 export default function HomePage() {
   const router = useRouter()
+  
+  // Достаем метод проверки роутов строго из твоего хука диспетчера
+  const { checkInitialState } = useWalletAuth()
 
   useEffect(() => {
-    // Проверяем наличие кошелька в локальном хранилище
-    const isAuth = localStorage.getItem("xcha_is_auth") === "true"
-    const hasMnemonic = !!localStorage.getItem("xcha_mnemonic")
+    // Вызываем бизнес-логику из хука
+    const state = checkInitialState()
 
-    if (isAuth && hasMnemonic) {
-      router.replace("/dashboard")
-    } else {
+    if (state === "NO_WALLET") {
       router.replace("/auth")
+    } else {
+      // Если кошелек на диске найден (хоть заблокированный, хоть нет) — пускаем на дашборд
+      router.replace("/dashboard")
     }
-  }, [router])
+  }, [checkInitialState, router])
 
   return (
     <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">

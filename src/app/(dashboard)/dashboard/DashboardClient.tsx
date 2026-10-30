@@ -9,31 +9,40 @@ import { BalanceSection } from "./_components/BalanceSection"
 import { AddressCard } from "./_components/AddressCard"
 import { ActivityList } from "./_components/ActivityList"
 import { BackupCard } from "./_components/BackupCard"
-import { UnlockDashboardForm } from "./UnlockDashboardForm"
+
 import { ReceiveModal } from "./_components/ReceiveModal"
 import { SendModal } from "./_components/SendModal"
 import { WalletLayout } from "@/components/WalletLayout"
 
 import { useWalletAuth } from "@/hooks/useWalletAuth"
+import { UnlockPinForm } from "./UnlockPinForm"
 
 export default function DashboardClient() {
   const router = useRouter()
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
   const [isSendOpen, setIsSendOpen] = useState(false)
 
-  // 🔥 ХУК ВСЁ ДЕЛАЕТ САМ: Просто забираем готовые стейты и методы
+  // 🔥 Локальный предохранитель: пока не проверили роуты на клиенте — интерфейс заблокирован
+  const [hasChecked, setHasChecked] = useState(false)
+
+  // Забираем готовые стейты и методы из твоего хука
   const { isScreenLocked, isVerifying, checkInitialState } = useWalletAuth()
 
-  // Запускаем проверку роутов при монтировании
+  // Запускаем проверку роутов при монтировании строго на клиенте
   useEffect(() => {
     const state = checkInitialState()
+    
     if (state === "NO_WALLET") {
       router.push("/auth")
+    } else {
+      // Железно подтверждаем, что проверка завершена и кошелек есть на устройстве
+      setHasChecked(true)
     }
   }, [checkInitialState, router])
 
-  // 🧱 ЭКРАН 1: Первичная проверка (Пока Zustand парсит память после F5)
-  if (isVerifying) {
+  // 🧱 ЭКРАН 1: Статус загрузки (Пока Zustand парсит память ИЛИ пока идет проверка роутов)
+  // 🛡️ ДОБАВЛЕНО `!hasChecked`: Теперь кошелек физически не сможет мелькнуть раньше времени
+  if (isVerifying || !hasChecked) {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
         <div className="absolute w-[250px] h-[250px] bg-[#FF2E93]/10 blur-[80px] rounded-full animate-pulse pointer-events-none" />
@@ -53,7 +62,7 @@ export default function DashboardClient() {
     return (
       <div className="min-h-screen w-full bg-zinc-950 flex flex-col items-center justify-center relative overflow-hidden">
         <div className="absolute top-[-25%] left-[-20%] w-[140%] h-[70vh] bg-gradient-to-br from-[#FF2E93]/20 via-[#8B5CF6]/10 to-transparent blur-[130px] pointer-events-none z-0" />
-        <UnlockDashboardForm />
+        <UnlockPinForm />
       </div>
     )
   }
