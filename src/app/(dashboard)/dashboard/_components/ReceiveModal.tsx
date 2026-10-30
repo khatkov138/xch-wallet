@@ -5,18 +5,22 @@ import { X, Copy, Check, Share2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import QRCode from "qrcode"
+import { useWalletBalance } from "@/hooks/useWalletBalance" // 👈 Твой хук баланса
 
-// ИСПРАВЛЕНИЕ: Жестко зафиксировали интерфейс пропсов строго под требования page.tsx
+// 🔥 ИСПРАВЛЕНИЕ: Убрали walletAddress из пропсов, модалка теперь независима
 interface ReceiveModalProps {
   isOpen: boolean
   onClose: () => void 
-  walletAddress: string
 }
 
-export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalProps) {
+export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
+  // 1. Вытаскиваем массив адресов из твоего хука баланса
+  const { addresses } = useWalletBalance()
   const [copied, setCopied] = useState(false)
   const [qrSvg, setQrSvg] = useState<string>("")
 
+  // Достаем самый первый сгенерированный адрес (Index 0)
+  const walletAddress = addresses?.[0]?.address ?? ""
   const isAddressLoaded = walletAddress && walletAddress.trim() !== ""
 
   // Векторная генерация QR-кода прямо в браузере без внешних запросов
@@ -72,13 +76,11 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm transition-all duration-300 animate-in fade-in">
-
       {/* Закрытие модалки при клике на задний фон */}
       <div className="absolute inset-0" onClick={onClose} />
 
       {/* Контейнер шторки — выезжает снизу вверх */}
       <div className="relative w-full max-w-md bg-zinc-900 border-t border-zinc-800 rounded-t-[32px] p-6 space-y-6 shadow-2xl animate-in slide-in-from-bottom duration-300 z-10">
-
         {/* Хэндл шторки для удобного свайпа визуально */}
         <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto -mt-2 mb-2 select-none" />
 
@@ -96,11 +98,10 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
           </button>
         </div>
 
-        {/* Блок QR-кода с твоим фирменным неоновым свечением под ним */}
+        {/* Блок QR-кода */}
         <div className="flex flex-col items-center justify-center space-y-4 py-2">
           <div className="relative p-4 bg-white rounded-3xl shadow-xl shadow-[#FF2E93]/5 border-4 border-zinc-950 ring-1 ring-zinc-800 min-w-[192px] min-h-[192px] flex items-center justify-center">
             {qrSvg ? (
-              // Отрисовываем чистый локальный SVG-код
               <div 
                 className="w-40 h-40 select-none" 
                 dangerouslySetInnerHTML={{ __html: qrSvg }} 
@@ -128,7 +129,7 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
           </CardContent>
         </Card>
 
-        {/* Финтех кнопки нижнего ряда: Копировать и Поделиться */}
+        {/* Финтех кнопки нижнего ряда */}
         <div className="grid grid-cols-2 gap-3">
           <Button
             onClick={handleCopy}
@@ -151,7 +152,6 @@ export function ReceiveModal({ isOpen, onClose, walletAddress }: ReceiveModalPro
             <span>ПОДЕЛИТЬСЯ</span>
           </Button>
         </div>
-
       </div>
     </div>
   )

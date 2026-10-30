@@ -3,7 +3,6 @@
 import React from "react"
 import { LogOut } from "lucide-react"
 // ⚡ ЗАМЕНИЛИ СТОР НА НАШ УМНЫЙ ХУК-ФАСАД
-import { useWalletAuth } from "@/hooks/useWalletAuth"
 
 interface WalletHeaderProps {
   variant: "auth" | "dashboard"
@@ -12,7 +11,6 @@ interface WalletHeaderProps {
 
 export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps) {
   // Достаем метод полной очистки сессии и блокировки из хука
-  const { lockWallet } = useWalletAuth()
   
   const isDash = variant === "dashboard"
   const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
@@ -26,7 +24,7 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
     
     // 2. Вызываем метод из хука, который сам очистит Zustand-стор, 
     // кэш ключей TanStack Query и все сессионные таймеры в sessionStorage
-    lockWallet()
+    
     
     // 3. Жесткий редирект на главную страницу авторизации
     window.location.href = "/"

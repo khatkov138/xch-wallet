@@ -2,16 +2,15 @@
 
 import React, { useState } from "react"
 import { Copy, Check, Loader2 } from "lucide-react"
-import { useWalletAuth } from "@/hooks/useWalletAuth" 
+
 import { useWalletBalance } from "@/hooks/useWalletBalance" // 🔥 Подключаем наш реактивный хук баланса
 
 export function AddressCard() {
   const [copied, setCopied] = useState(false)
   
   // 1. Проверяем авторизацию / наличие ключа
-  const { getUnhardenedPkHex } = useWalletAuth()
-  const unhardenedPkHex = getUnhardenedPkHex()
-
+  
+ 
   // 2. 🔥 Забираем готовые адреса из нашего TanStack Query кэша
   // Хук не будет делать новый запрос к бэку, он возьмет данные из общего кэша дашборда
   const { addresses, isLoading } = useWalletBalance()
@@ -20,7 +19,7 @@ export function AddressCard() {
   const address0 = addresses.find((a) => a.index === 0)?.address || ""
 
   // Карточка считается загруженной, когда есть и публичный ключ, и адрес от бэкенда
-  const isLoaded = Boolean(unhardenedPkHex) && Boolean(address0) && !isLoading
+  const isLoaded = true
 
   const copyAddress = async () => {
     if (!isLoaded) return

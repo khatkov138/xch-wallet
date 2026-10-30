@@ -3,7 +3,7 @@
 import React, { useState } from "react"
 import { ArrowRight, AlertCircle, Clipboard } from "lucide-react"
 import * as bip39 from "bip39"
-import { Button } from "../../../../components/ui/button"
+import { Button } from "@/components/ui/button"
 
 interface ImportPhraseFormProps {
   onSubmit: (phrase: string) => void

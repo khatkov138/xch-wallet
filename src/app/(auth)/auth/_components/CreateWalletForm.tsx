@@ -2,9 +2,11 @@
 
 import React, { useState } from "react"
 import { useRouter } from "next/navigation"
-import { encryptMnemonic } from "@/lib/crypto"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
+
 import { PinCodeLayout } from "@/components/PinCodeLayout"
+import { useWalletAuth } from "@/hooks/useWalletAuth" 
+import { useSecureStorage } from "@/store/useWalletStore" 
+import { encryptMnemonic } from "@/utils/crypto" 
 
 interface EncryptPhraseFormProps {
   phraseToEncrypt: string
@@ -13,8 +15,9 @@ interface EncryptPhraseFormProps {
 
 export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhraseFormProps) {
   const router = useRouter()
-  // Вытаскиваем метод handleUnlockSuccess из твоего оригинального хука
-  const { handleUnlockSuccess } = useWalletAuth()
+  
+  const { loginWithClearMnemonic } = useWalletAuth()
+  const vault = useSecureStorage()
 
   const [step, setStep] = useState<"create" | "confirm">("create")
   const [tempPin, setTempPin] = useState("")
@@ -42,21 +45,21 @@ export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhr
           // 🛡 ЖЕСТКИЙ ФИЛЬТР: Проверяем, что фраза валидна перед шифрованием
           const cleanPhrase = phraseToEncrypt.trim().toLowerCase().replace(/\s+/g, " ")
           const wordsCount = cleanPhrase.split(" ").filter(Boolean).length
-          
+
+          // Строгая проверка: только 24 слова
           if (wordsCount !== 24) {
             throw new Error("Переданная фраза повреждена или не содержит 24 слова")
           }
 
-          // 1. Шифруем переданную фразу введенным пин-кодом
+          // 1. Шифруем
           const encryptedData = await encryptMnemonic(cleanPhrase, pin)
-          
-          // 2. Записываем маркеры авторизации в хранилище
-          localStorage.setItem("xcha_mnemonic", encryptedData)
-          localStorage.setItem("xcha_is_auth", "true")
-          
-          // 3. Вызываем метод из твоего родного хука для инициализации Zustand-стора
-          await handleUnlockSuccess(cleanPhrase)
-          
+
+          // 2. Сохраняем на жесткий диск через Zustand (localStorage)
+          vault.saveEncryptedMnemonic(encryptedData)
+
+          // 3. Одновременно поднимаем сессию в оперативке (sessionStorage)
+          await loginWithClearMnemonic(cleanPhrase)
+
           onAuthComplete()
           router.push("/dashboard")
         } catch (err: any) {

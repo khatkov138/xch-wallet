@@ -3,7 +3,7 @@ import fs from "fs"
 import path from "path"
 import https from "https"
 import os from "os"
-import { createApiResponse } from "@/lib/server-utils"
+import { createApiResponse } from "@/utils/server-utils"
 
 // Отключаем панику Node.js из-за самоподписанных SSL-сертификатов Chia ноды
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";

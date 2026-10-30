@@ -2,24 +2,30 @@
 
 import React, { useState } from "react"
 import { PinCodeLayout } from "@/components/PinCodeLayout"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
+import { useWalletAuth } from "@/hooks/useWalletAuth" // Твой понятный хук
+import { useSecureStorage, useWalletSession } from "@/store/useWalletStore" // Наши сторы
 
 export function UnlockDashboardForm() {
-  // Вызываем из хука метод разблокировки вместо ручной работы с криптой
-  const { unlockWalletByPin } = useWalletAuth()
+  // 1. Достаем метод разблокировки по ПИН-коду из хука
+  const { unlockWithPin } = useWalletAuth()
+  
+  // Достаем методы очистки для полного сброса кошелька
+  const vault = useSecureStorage()
+  const session = useWalletSession()
 
   const [shake, setShake] = useState(false)
   const [isError, setIsError] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
   const [subtitle, setSubtitle] = useState("Введи ПИН-код для подтверждения сессии и защиты ваших активов")
 
-  // Сброс кошелька, если пользователь забыл ПИН-код
+  // Сброс кошелька, если пользователь забыл ПИН-код (теперь красиво через Zustand)
   const handleResetWallet = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem("xcha_mnemonic")
-      localStorage.removeItem("xcha_is_auth")
-      sessionStorage.removeItem("xcha_session_expires")
-      window.location.href = "/"
+    if (confirm("Вы уверены? Это полностью сотрет кошелек с этого устройства!")) {
+      vault.deleteWallet() // Стирает зашифрованную мнемонику из localStorage
+      session.endSession() // Очищает активную сессию из sessionStorage
+      
+      // Выкидываем на страницу авторизации/создания
+      window.location.href = "/auth"
     }
   }
 
@@ -30,8 +36,9 @@ export function UnlockDashboardForm() {
     await new Promise(resolve => setTimeout(resolve, 300))
 
     try {
-      // 🔥 Вызываем единую бизнес-логику из хука
-      await unlockWalletByPin(pin)
+      // 🔥 Вызываем единую бизнес-логику из хука. 
+      // Она сама расшифрует мнемонику, поднимет сессию в Zustand и закроет экран блокировки.
+      await unlockWithPin(pin)
       
     } catch (e) {
       console.error("❌ Ошибка разблокировки экрана через хук:", e)

@@ -4,16 +4,13 @@ import React, { useState } from "react"
 import { Copy, Check, Eye, EyeOff, ShieldAlert, Printer } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 
-import { useWalletAuth } from "@/hooks/useWalletAuth" 
+
 import { PapperWalletPrintout } from "./PapperWalletPrintout"
 
-interface BackupCardProps {
-  walletAddress?: string
-}
 
-export function BackupCard({ walletAddress = "" }: BackupCardProps) {
+export function BackupCard() {
   // Забираем сид-фразу напрямую из хука без повторных крипто-вычислений на фронте
-  const { decryptedPhrase: mnemonic } = useWalletAuth()
+  const mnemonic = ''
 
   const [showSeed, setShowSeed] = useState(false)
   const [copiedSeed, setCopiedSeed] = useState(false)
@@ -78,7 +75,7 @@ export function BackupCard({ walletAddress = "" }: BackupCardProps) {
         </CardContent>
       </Card>
 
-      <PapperWalletPrintout mnemonic={mnemonic} walletAddress={walletAddress} />
+      <PapperWalletPrintout mnemonic={mnemonic}  />
     </>
   )
 }

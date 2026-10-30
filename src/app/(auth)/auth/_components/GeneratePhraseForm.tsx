@@ -4,8 +4,10 @@ import React, { useState, useEffect } from "react"
 import { ShieldCheck, RefreshCw, Check, ArrowRight, Printer } from "lucide-react"
 import * as bip39 from "bip39"
 
-import { PapperWalletPrintout } from "../../../(dashboard)/dashboard/_components/PapperWalletPrintout"
-import { Button } from "../../../../components/ui/button"
+
+
+import { PapperWalletPrintout } from "@/app/(dashboard)/dashboard/_components/PapperWalletPrintout"
+import { Button } from "@/components/ui/button"
 
 interface GeneratePhraseFormProps {
   onSubmit: (phrase: string) => void

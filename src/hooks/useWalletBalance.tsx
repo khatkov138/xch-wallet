@@ -1,48 +1,48 @@
 'use client'
 
 import { useQuery } from "@tanstack/react-query"
-import { useWalletPublicKey } from "@/hooks/useWalletPublicKey"
+import { useWalletSession } from "@/store/useWalletStore" // Подключаем нашу сессию из Zustand
 
-export interface IndexRecord { 
-  index: number; 
+export interface IndexRecord {
+  index: number;
   address: string;
-  puzzle_hash: string; 
-  balance_mojos: number; 
-  balance_xch: number; 
-  has_balance: boolean; 
+  puzzle_hash: string;
+  balance_mojos: number;
+  balance_xch: number;
+  has_balance: boolean;
   coins: any[];
 }
 
-export interface BackendResponse { 
-  total_xch: string;       // 🔥 Исправлено под твой wallets.py
-  total_mojo: string;      // 🔥 Исправлено под твой wallets.py
-  addresses: IndexRecord[]; 
+export interface BackendResponse {
+  total_xch: string;
+  total_mojo: string;
+  addresses: IndexRecord[];
 }
 
-export function useWalletBalance(mnemonic: string = 'material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden') {
-  // 1. Автоматически вытаскиваем Master Public Key из мнемоники локально на фронте
-  const { masterPkHex, isLoading: isKeyLoading } = useWalletPublicKey({ mnemonic })
+export function useWalletBalance() {
+  // 1. Достаем публичный ключ прямо из Zustand-сессии (он там уже лежит после ПИН-кода)
+  const { unhardenedPkHex } = useWalletSession()
 
   // 2. Запускаем TanStack Query с авто-рефетчем раз в 30 секунд
   const query = useQuery<BackendResponse>({
-    queryKey: ['walletBalance', masterPkHex],
+    // В queryKey передаем наш ключ из Zustand, чтобы при смене кошелька данные авто-перезапрашивались
+    queryKey: ['walletBalance', unhardenedPkHex],
     queryFn: async () => {
-      // 🔥 Исправлен урл под точный роут твоего wallets.py: /api/wallet/balance
       const response = await fetch(
-        `http://localhost:8000/api/wallet/balance?publicKeyHex=${masterPkHex}&limit=200`
+        `http://localhost:8000/api/wallet/balance?publicKeyHex=${unhardenedPkHex}&limit=200`
       );
       if (!response.ok) {
         throw new Error(`Ошибка сервера: ${response.status}`);
       }
       return response.json();
     },
-    // Запрос пойдет только тогда, когда ключ кошелька успешно сгенерирован в браузере
-    enabled: !!masterPkHex, 
+    // Запрос пойдет ТОЛЬКО тогда, когда юзер авторизован и ключ есть в сессии
+    enabled: !!unhardenedPkHex,
     refetchInterval: 30000, // Авто-апдейт каждые 30 секунд
     staleTime: 15000,       // Данные считаются свежими 15 секунд
   })
 
-  // 🔥 Исправлено чтение полей из ответа бэкенда (извлекаем total_xch)
+  // Извлекаем балансы из ответа бэкенда
   const realXCHStr = query.data?.total_xch ?? "0"
   const numericXCH = Number(realXCHStr)
 
@@ -51,6 +51,7 @@ export function useWalletBalance(mnemonic: string = 'material harvest garage wis
     realXCHStr,
     numericXCH,
     addresses: query.data?.addresses ?? [],
-    isLoading: isKeyLoading || query.isLoading,
+    // Загрузка идет, пока TanStack Query тащит данные с бэка
+    isLoading: query.isLoading,
   }
 }

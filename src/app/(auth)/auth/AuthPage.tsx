@@ -6,7 +6,7 @@ import { KeyRound, PlusCircle } from "lucide-react"
 
 import { GeneratePhraseForm } from "./_components/GeneratePhraseForm"
 import { ImportPhraseForm } from "./_components/ImportPhraseForm"
-import { CreateWalletForm } from "./CreateWalletForm"
+import { CreateWalletForm } from "./_components/CreateWalletForm"
 import { AuthBackground } from "./_components/AuthBackground"
 import { WalletLayout } from "@/components/WalletLayout"
 import { Card, CardContent } from "@/components/ui/card"

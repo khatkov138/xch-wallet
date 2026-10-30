@@ -3,36 +3,24 @@
 import React, { useState, useEffect } from "react"
 import { X, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { useWalletAuth } from "@/hooks/useWalletAuth"
-import { useWalletPublicKey } from "@/hooks/useWalletPublicKey"
+
+
 import bip39 from 'bip39'
 import chiaBls from 'chia-bls'
-import { sha256 } from '@noble/hashes/sha2'
+
+import { useWalletSession } from "@/store/useWalletStore"
+import { chiaDeriveChildSkUnhardened } from "@/utils/crypto"
 
 const { PrivateKey } = chiaBls;
-const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
 
 // ЖЕСТКИЙ ХАРДКОД ТВОЕЙ ТЕСТОВОЙ МНЕМОНИКИ
 const HARDCODED_MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden";
 
-function intToBytes4(val: number): Uint8Array {
-  return new Uint8Array([(val >> 24) & 0xff, (val >> 16) & 0xff, (val >> 8) & 0xff, val & 0xff]);
-}
 
-function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
-  const parentPkBytes = parentSk.getG1().toBytes();
-  const indexBytes = intToBytes4(index);
-  const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
-  concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
-  const hash = sha256(concat);
-  const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
-  const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
-  const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
-  return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
-}
+
 
 export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { lockWallet } = useWalletAuth()
+
   const [step, setStep] = useState<1 | 2>(1)
   const [targetAddress, setTargetAddress] = useState("")
   const [amount, setAmount] = useState("")
@@ -45,7 +33,7 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
 
   // ЮЗАЕМ НАШ ХУК: Автоматически достаем master_pk_hex из захардкоженной мнемоники
-  const { masterPkHex } = useWalletPublicKey({ mnemonic: HARDCODED_MNEMONIC })
+  const { unhardenedPkHex: masterPkHex } = useWalletSession()
 
   useEffect(() => { if (!isOpen) { setPin(""); setStep(1); setStatusMessage(""); setDebugJsonString(""); setPreparedSpendData(null); setPinAttempts(0); } }, [isOpen])
   if (!isOpen) return null
@@ -138,7 +126,7 @@ export function SendModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
         setPinAttempts(0);
       } catch (err: any) {
         const nextAttempts = pinAttempts + 1; setPinAttempts(nextAttempts); setPin("");
-        if (nextAttempts >= 3) { lockWallet(); onClose(); }
+        if (nextAttempts >= 3) { onClose(); }
         else setStatusMessage(`❌ Неверный ПИН-код или ошибка подписи! Осталось: ${3 - nextAttempts}\n${err.message || err}`)
       } finally { setLoading(false) }
     }

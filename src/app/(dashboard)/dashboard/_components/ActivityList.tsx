@@ -4,28 +4,26 @@ import React from "react"
 import { ArrowUpRight, ArrowDownLeft, Layers } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { useQuery } from "@tanstack/react-query"
-import { useWalletPublicKey } from "@/hooks/useWalletPublicKey" // 🔥 Тот самый проверенный хук
+import { useWalletSession } from "@/store/useWalletStore" // Подключаем сессию вместо старого хука
 import { CleanTransaction, formatAddress, formatDate } from "@/app/types/chia"
 
 export function ActivityList() {
-  // 🔥 Вытаскиваем Master PK строго из проверенного хука с дефолтной мнемоникой
-  const { masterPkHex } = useWalletPublicKey({
-    mnemonic: 'material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden'
-  })
+  // 1. Моментально забираем публичный ключ из активной сессии Zustand
+  const { unhardenedPkHex } = useWalletSession()
 
-  // Запрашиваем историю транзакций по проверенному publicKeyHex
-  const { data: transactions = [] } = useQuery<CleanTransaction[]>({
-    queryKey: ['walletTransactions', masterPkHex],
+  // 2. Запрашиваем историю транзакций по реальному unhardenedPkHex
+  const { data: transactions = [], isLoading } = useQuery<CleanTransaction[]>({
+    queryKey: ['walletTransactions', unhardenedPkHex],
     queryFn: async () => {
-      const res = await fetch(`http://localhost:8000/api/wallet/transactions?publicKeyHex=${masterPkHex}&limit=200`);
+      const res = await fetch(`http://localhost:8000/api/wallet/transactions?publicKeyHex=${unhardenedPkHex}&limit=200`);
       if (!res.ok) throw new Error("Ошибка загрузки истории");
       return res.json();
     },
-    enabled: !!masterPkHex,
+    // Запрос пойдет только если юзер залогинен и ключ есть в оперативке
+    enabled: !!unhardenedPkHex,
     refetchInterval: 10000,
     staleTime: 5000,
   })
-
 
   return (
     <div className="space-y-2.5">
@@ -36,7 +34,12 @@ export function ActivityList() {
 
       <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
         <CardContent className="p-2 space-y-1 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
-          {transactions.length === 0 ? (
+          {isLoading ? (
+            /* Красивое состояние загрузки пока тащим транзакции */
+            <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider animate-pulse">
+              Загрузка истории...
+            </div>
+          ) : transactions.length === 0 ? (
             <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
               История транзакций пуста
             </div>

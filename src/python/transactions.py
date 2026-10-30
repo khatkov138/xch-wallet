@@ -24,32 +24,50 @@ async def build_spend_bundle(
     fee_mojos: int = Body(0, embed=True)
 ):
     try:
+        print("\n=== PYTHON: START BUILD BUNDLE ===", flush=True)
+        print(f"[PY] master_pk_hex input: {master_pk_hex}", flush=True)
+        
         required = mojos_to_send + fee_mojos
         cert, key = get_ssl_credentials()
         genesis = fetch_genesis(cert, key)
         master_pk = G1Element.from_bytes(bytes.fromhex(master_pk_hex))
         puzzle_hashes_map = {}
         
-        # Генерация матрицы адресов на 200 индексов
+        # Generation of target puzzle hashes
         for idx in range(200):
             wallet_pk = get_wallet_pk_unhardened(master_pk, idx)
             ph = puzzle_for_pk(wallet_pk).get_tree_hash()
             puzzle_hashes_map[ph.hex()] = (idx, encode_puzzle_hash(ph, TESTNET_PREFIX), wallet_pk)
             
+            # 🔥 ПРИНТЫ ДЛЯ СВЕРКИ АДРЕСОВ (Выводим первые 5 индексов через bytes)
+            if idx < 5:
+                print(f"[PY_GEN_INDEX {idx}] -> wallet_pk: {bytes(wallet_pk).hex()} | puzzle_hash: 0x{ph.hex()}", flush=True)
+            
+        print(f"[PY] Отправка запроса в ноду для {len(puzzle_hashes_map)} хэшей...", flush=True)
         res = requests.post(f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", json={"puzzle_hashes": list(puzzle_hashes_map.keys()), "include_spent_coins": False, "start_height": 0}, cert=(cert, key), verify=False).json()
+        
+        coin_records = res.get("coin_records", [])
+        print(f"[PY] Нода вернула {len(coin_records)} незакрытых монет.", flush=True)
+        
         best_coin, best_amt, best_idx = None, -1, -1
         
-        for r in res.get("coin_records", []):
+        for r in coin_records:
             c_data = r["coin"]
             amt, ph_clean = c_data["amount"], c_data["puzzle_hash"].replace("0x", "")
+            
+            # 🔥 ПРИНТ НАЙДЕННЫХ МОНЕТ
+            print(f"[PY_COIN_FOUND] Coin on PH: 0x{ph_clean} | Amount: {amt}", flush=True)
+            
             if amt >= required and amt > best_amt:
                 best_amt = amt
                 best_idx, _, wallet_pk = puzzle_hashes_map[ph_clean]
                 best_coin = Coin(bytes.fromhex(c_data["parent_coin_info"].replace("0x", "")), bytes.fromhex(ph_clean), amt)
                     
         if not best_coin: 
+            print("[PY_ERROR] Подходящих монет в ответе ноды не найдено!", flush=True)
             raise HTTPException(status_code=400, detail="Нет монет для покрытия суммы + комиссии!")
         
+        print(f"[PY_SUCCESS] Выбрана монета! Индекс: {best_idx} | Сумма: {best_amt}", flush=True)
         _, _, wallet_pk = puzzle_hashes_map[best_coin.puzzle_hash.hex()]
         py_puzzle = puzzle_for_pk(wallet_pk)
         change = best_coin.amount - required

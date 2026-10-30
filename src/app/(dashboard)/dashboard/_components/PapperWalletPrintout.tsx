@@ -2,10 +2,10 @@
 
 interface PaperWalletPrintoutProps {
     mnemonic: string
-    walletAddress: string
+  
 }
 
-export function PapperWalletPrintout({ mnemonic, walletAddress }: PaperWalletPrintoutProps) {
+export function PapperWalletPrintout({ mnemonic }: PaperWalletPrintoutProps) {
     if (!mnemonic) return null
     const words = mnemonic.split(" ")
 
@@ -33,15 +33,7 @@ export function PapperWalletPrintout({ mnemonic, walletAddress }: PaperWalletPri
                 </p>
             </div>
 
-            {/* Адрес */}
-            {walletAddress && (
-                <div className="mb-6 p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
-                    <h3 className="text-[10px] font-black uppercase text-zinc-500 tracking-wider">
-                        Ваш публичный адрес (Chia Address):
-                    </h3>
-                    <p className="font-mono text-xs text-zinc-900 break-all select-all">{walletAddress}</p>
-                </div>
-            )}
+          
 
             {/* Красивая сетка 24 слов без лишнего мусора дашборда */}
             <h3 className="text-[10px] font-black uppercase text-zinc-500 tracking-wider mb-2.5 px-0.5">
