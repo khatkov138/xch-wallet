@@ -18,36 +18,63 @@ def generate_integrity_token(msg_hex: str, coin_json: dict) -> str:
     serialized = f"{msg_hex.lower()}:{json.dumps(coin_json, sort_keys=True)}"
     return hmac.new(API_SECRET, serialized.encode("utf-8"), hashlib.sha256).hexdigest()
 
+async def check_node_synced_internal(client: httpx.AsyncClient):
+    """Внутренний чек синхронизации полной ноды Chia перед сборкой контракта"""
+    try:
+        res = await client.post(f"{BASE_RPC_URL}/get_blockchain_state", json={})
+        state_data = res.json()
+        if state_data.get("success"):
+            synced = state_data.get("blockchain_state", {}).get("sync", {}).get("synced", False)
+            if not synced:
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Сеть кошелька временно недоступна: полная нода Chia находится в процессе синхронизации. Попробуйте отправить позже."
+                )
+    except httpx.HTTPError:
+        # Если нода лежит или таймаут, мы всё равно не сможем отправить транзу, так что выдаем 503
+        raise HTTPException(status_code=503, detail="Служба блокчейна временно недоступна. Проверьте подключение к ноде.")
+
 @tx_router.post("/build-spend-bundle")
-async def build_spend_bundle(master_pk_hex: str = Body(..., embed=True), send_to_address: str = Body(..., embed=True), mojos_to_send: int = Body(..., embed=True), fee_mojos: int = Body(0, embed=True)):
+async def build_spend_bundle(
+    master_pk_hex: str = Body(..., embed=True),
+    wallet_index: int = Body(..., embed=True),   
+    coin_to_spend: dict = Body(..., embed=True), 
+    send_to_address: str = Body(..., embed=True),
+    mojos_to_send: int = Body(..., embed=True),
+    fee_mojos: int = Body(0, embed=True)
+):
     try:
         required = mojos_to_send + fee_mojos
         cert, key = get_ssl_credentials()
-        genesis = fetch_genesis(cert, key)
-        master_pk = G1Element.from_bytes(bytes.fromhex(master_pk_hex.replace("0x", "")))
-        puzzle_hashes_map = {}
         
-        for idx in range(200):
-            wallet_pk = get_wallet_pk_unhardened(master_pk, idx)
-            ph = puzzle_for_pk(wallet_pk).get_tree_hash()
-            puzzle_hashes_map[ph.hex()] = (idx, encode_puzzle_hash(ph, TESTNET_PREFIX), wallet_pk)
-            
+        # 🎯 ШЛАГБАУМ НА ВХОДЕ: Идем проверять статус ноды по сети перед сборкой.
+        # Если нода в процессе синхронизации — функция сразу выбросит HTTPException 503 и прервет билд.
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
-            res = (await c.post(f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", json={"puzzle_hashes": list(puzzle_hashes_map.keys()), "include_spent_coins": False, "start_height": 0})).json()
+            await check_node_synced_internal(c)
         
-        best_coin = None
-        for r in res.get("coin_records", []):
-            c_data = r["coin"]
-            amt, ph_clean = c_data["amount"], c_data["puzzle_hash"].replace("0x", "")
-            idx, _, wallet_pk = puzzle_hashes_map[ph_clean]
-            if idx == 0 and amt >= required:
-                best_coin = Coin(bytes.fromhex(c_data["parent_coin_info"].replace("0x", "")), bytes.fromhex(ph_clean), amt)
-                break
-                
-        if not best_coin: raise HTTPException(status_code=400, detail="На основном адресе (индекс 0) недостаточно монет!")
+        genesis = fetch_genesis(cert, key)
         
-        _, _, wallet_pk = puzzle_hashes_map[best_coin.puzzle_hash.hex()]
+        # 1. Распаковываем монету, присланную фронтендом
+        c_parent = bytes.fromhex(coin_to_spend["parent_coin_info"].replace("0x", ""))
+        c_ph_str = coin_to_spend["puzzle_hash"].replace("0x", "")
+        c_amount = int(coin_to_spend["amount"])
+        
+        if c_amount < required:
+            raise HTTPException(status_code=400, detail="Суммы выбранной монеты недостаточно для перевода и комиссии!")
+
+        # 2. БЕЗОПАСНОСТЬ: Проверяем локально, что монета реально деривируется из этого master_pk по этому индексу
+        master_pk = G1Element.from_bytes(bytes.fromhex(master_pk_hex.replace("0x", "")))
+        wallet_pk = get_wallet_pk_unhardened(master_pk, wallet_index)
         py_puzzle = puzzle_for_pk(wallet_pk)
+        expected_ph_hex = py_puzzle.get_tree_hash().hex()
+        
+        if c_ph_str.lower() != expected_ph_hex.lower():
+            raise HTTPException(status_code=403, detail="Критическая ошибка: Пузл-хэш монеты не совпадает с ключом индекса!")
+
+        # 3. Собираем объект Coin
+        best_coin = Coin(c_parent, bytes.fromhex(c_ph_str), c_amount)
+        
+        # 4. Формируем условия Chia транзакции и расчет сдачи
         conds = [make_create_coin_condition(decode_puzzle_hash(send_to_address), mojos_to_send, [])]
         if best_coin.amount - required > 0: 
             conds.append(make_create_coin_condition(py_puzzle.get_tree_hash(), best_coin.amount - required, []))
@@ -57,10 +84,25 @@ async def build_spend_bundle(master_pk_hex: str = Body(..., embed=True), send_to
         msg_hex = (py_sol.rest().first().get_tree_hash() + best_coin.name() + genesis).hex()
         
         coin_spend_json = {
-            "coin": {"parent_coin_info": "0x" + best_coin.parent_coin_info.hex(), "puzzle_hash": "0x" + best_coin.puzzle_hash.hex(), "amount": best_coin.amount},
-            "puzzle_reveal": "0x" + bytes(coin_spend.puzzle_reveal).hex(), "solution": "0x" + bytes(coin_spend.solution).hex()
+            "coin": {
+                "parent_coin_info": "0x" + best_coin.parent_coin_info.hex(), 
+                "puzzle_hash": "0x" + best_coin.puzzle_hash.hex(), 
+                "amount": best_coin.amount
+            },
+            "puzzle_reveal": "0x" + bytes(coin_spend.puzzle_reveal).hex(), 
+            "solution": "0x" + bytes(coin_spend.solution).hex()
         }
-        return {"success": True, "target_wallet_index": 0, "message_to_sign_hex": msg_hex, "integrity_token": generate_integrity_token(msg_hex, coin_spend_json), "coin_spend": coin_spend_json, "hidden_puzzle_hash_hex": DEFAULT_HIDDEN_PUZZLE_HASH.hex(), "verified_target_address": send_to_address, "verified_mojos_to_send": mojos_to_send}
+        
+        return {
+            "success": True, 
+            "target_wallet_index": wallet_index, 
+            "message_to_sign_hex": msg_hex, 
+            "integrity_token": generate_integrity_token(msg_hex, coin_spend_json), 
+            "coin_spend": coin_spend_json, 
+            "hidden_puzzle_hash_hex": DEFAULT_HIDDEN_PUZZLE_HASH.hex(), 
+            "verified_target_address": send_to_address, 
+            "verified_mojos_to_send": mojos_to_send
+        }
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
@@ -100,10 +142,17 @@ async def send_tx(signature_hex: str = Body(..., embed=True), coin_spend: dict =
                 "success": True, 
                 "status": "tx_submitted", 
                 "tx_id": tx_id_hex, 
-                "coin_id": coin_id_hex,  # 🎯 Добавили эту строчку!
+                "coin_id": coin_id_hex, 
                 "push_response": push_res
             }
 
-        return {"success": False, "error": push_res.get("error", "Unknown error")}
+        node_error = push_res.get("error", "Unknown error")
+        if "NO_TRANSACTIONS_WHILE_SYNCING" in node_error:
+            raise HTTPException(
+                status_code=503, 
+                detail="Нода Chia сейчас синхронизируется с сетью и временно не принимает транзакции. Пожалуйста, подождите несколько минут и повторите отправку."
+            )
+
+        return {"success": False, "error": node_error}
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))

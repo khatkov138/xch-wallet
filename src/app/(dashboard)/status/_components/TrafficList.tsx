@@ -37,13 +37,13 @@ export function TrafficList({ peersList }: TrafficListProps) {
                 {peer.ip}
               </span>
               
-              {/* 🎯 ИСПРАВЛЕНО: УБРАЛИ font-mono! Цифры теперь гладкие, плотные и чистые, как в балансах */}
-              <div className="flex items-center gap-3 text-right font-black tracking-tight text-xs">
+              {/* 🎯 ИСПРАВЛЕНО: Заменили font-black на font-bold, теперь цифры не слишком жирные */}
+              <div className="flex items-center gap-3 text-right font-bold tracking-tight text-xs">
                 <span className="text-emerald-400">
-                  ↓{Math.round(parseFloat(peer.trafficDownMb))}MB
+                  ↓{parseFloat(peer.trafficDownMb).toFixed(2)}MB
                 </span>
                 <span className="text-purple-400">
-                  ↑{Math.round(parseFloat(peer.trafficUpMb))}MB
+                  ↑{parseFloat(peer.trafficUpMb).toFixed(2)}MB
                 </span>
               </div>
             </div>

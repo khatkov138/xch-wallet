@@ -2,15 +2,19 @@
   "name": "test",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
+"scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "dev:python": "cross-env PYTHONIOENCODING=utf-8 uvicorn server:app --app-dir src/python --host 127.0.0.1 --port 8000 --reload",
-    "dev:next": "wait-on http-get://127.0.0.1:8000/api/ping && next dev",
-    "dev:all": "concurrently \"npm run dev:python\" \"npm run dev:next\""
-  },
+    "lint": "eslint"
+    
+   }
+
+
+
+
+,
+
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@noble/bls12-381": "^1.4.0",

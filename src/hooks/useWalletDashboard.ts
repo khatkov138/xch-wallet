@@ -10,8 +10,6 @@ export function useWalletDashboard() {
   const isVerifying = useWalletSession((state: any) => state.isVerifying)
   const isScreenLocked = useWalletSession((state: any) => state.isScreenLocked)
 
-  // 🎯 ЖЕЛЕЗОБЕТОННОЕ УСЛОВИЕ: Плевать на флаги гидратации.
-  // Если ключ в памяти появился, экран не заблокирован и пин-код проверен — СРАЗУ пускаем запрос.
   const isReadyToFetch = !isVerifying && !isScreenLocked && !!unhardenedPkHex
 
   const query = useQuery<any>({
@@ -38,7 +36,7 @@ export function useWalletDashboard() {
       }
       return json
     },
-    enabled: isReadyToFetch, // Включится реактивно, как только появится ключ
+    enabled: isReadyToFetch,
     staleTime: 5 * 60 * 1000,
     refetchInterval: 15 * 1000,
     refetchIntervalInBackground: false
@@ -48,12 +46,14 @@ export function useWalletDashboard() {
   const numericXCH = Number(realXCHStr)
   const addresses = query.data?.balance?.addresses ?? []
   const transactions = query.data?.transactions ?? []
+  const unspentCoins = query.data?.unspent_coins ?? [] // 🎯 ДОБАВИЛИ: вытаскиваем купюры из кэша
 
   return {
     realXCHStr,
     numericXCH,
     addresses,
     transactions,
+    unspentCoins, // 🎯 ДОБАВИЛИ: отдаем модалкам
     error: query.error,
     isFetching: query.isFetching,
     isLoading: query.isLoading || !query.data,

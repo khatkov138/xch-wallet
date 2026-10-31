@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react"
 import { useSendTransaction } from "@/hooks/useSendTransaction"
+import { useWalletDashboard } from "@/hooks/useWalletDashboard" // 🎯 ИМПОРТИРУЕМ ДАШБОРД ХУК
 import { Button } from "@/components/ui/button"
 import { Loader2, X, AlertCircle } from "lucide-react"
 import { renderHighlightedAddress } from "@/lib/utils/ui"
@@ -21,6 +22,9 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
   const [customFeeMojo, setCustomFeeMojo] = useState("5000000") // 5 000 000 Mojo дефолт сети
   const [pin, setPin] = useState("")
 
+  // 🎯 ДОСТАЕМ ЖИВЫЕ КУПЮРЫ ИЗ КЭША ДАШБОРДА
+  const { unspentCoins } = useWalletDashboard()
+
   const {
     step,
     setStep,
@@ -34,7 +38,8 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
     customFeeMojo,
     pin,
     setPin,
-    onClose
+    onClose,
+    unspentCoins // 🎯 ПРОКИДЫВАЕМ МОНЕТЫ В ХУК ОТПРАВКИ
   })
 
   useEffect(() => {
@@ -131,8 +136,8 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
           ) : (
             <div className="flex gap-2">
               <Button type="button" variant="outline" disabled={loading} onClick={() => setStep(1)} className="w-1/3 h-12 rounded-xl text-xs font-bold cursor-pointer border-zinc-800 hover:bg-zinc-800 text-zinc-300">Назад</Button>
-              <Button type="submit" disabled={loading || !pin} className="w-2/3 h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer">
-                {loading ? <Loader2 size={14} className="animate-spin text-black" /> : "Подписать контракт и отправить"}
+              <Button type="submit" disabled={loading || !pin} className="w-2/3 h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 disabled:opacity-50 transition-all cursor-pointer">
+                {loading ? <Loader2 size={14} className="animate-spin text-black" /> : "Подписать и отправить"}
               </Button>
             </div>
           )}

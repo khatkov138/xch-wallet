@@ -4,14 +4,14 @@ import { useWalletSession } from "@/store/useWalletStore"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
 
-
 interface UseSendTransactionProps {
   targetAddress: string
-  amount: string
+  amount: string  
   customFeeMojo: string
   pin: string
   setPin: (pin: string) => void
   onClose: () => void
+  unspentCoins: any[] // 🎯 ПРИНЯЛИ: Сюда прокидываем массив монет из хука useWalletDashboard
 }
 
 interface LocalSnapshot {
@@ -26,7 +26,8 @@ export function useSendTransaction({
   customFeeMojo,
   pin,
   setPin,
-  onClose
+  onClose,
+  unspentCoins // 🎯 ПРИНЯЛИ
 }: UseSendTransactionProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [pinAttempts, setPinAttempts] = useState(0)
@@ -59,6 +60,18 @@ export function useSendTransaction({
 
       const totalMojosToSend = Math.round(xch * 1_000_000_000_000)
       const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
+      const required = totalMojosToSend + totalFeeMojos
+
+      // 🎯 ВЫБОР КОИНА: Логика один-в-один как была на бэкенде по дефолту
+      // Ищем среди непотраченных монет ту, что лежит на индексе 0 и имеет достаточный баланс
+      
+      const suitableItem = unspentCoins.find(
+        (item: any) => item.wallet_index === 0 && item.coin.amount >= required
+      )
+
+      if (!suitableItem) {
+        throw new Error("На основном адресе (индекс 0) недостаточно монет для покрытия суммы и комиссии!")
+      }
 
       const snapshot: LocalSnapshot = {
         targetAddress: targetAddress.trim(),
@@ -72,6 +85,8 @@ export function useSendTransaction({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           master_pk_hex: masterPkHex,
+          wallet_index: suitableItem.wallet_index, // 🎯 передаем индекс кошелька (0)
+          coin_to_spend: suitableItem.coin,       // 🎯 передаем саму купюру
           send_to_address: snapshot.targetAddress,
           mojos_to_send: snapshot.mojosToSend,
           fee_mojos: snapshot.feeMojos
@@ -129,7 +144,7 @@ export function useSendTransaction({
       // Сверяем сумму в mojo
       if (preparedSpendData.verified_mojos_to_send !== localSnapshot.mojosToSend) {
         console.error("❌ ПОДМЕНА СУММЫ: Бэк изменил сумму!", preparedSpendData.verified_mojos_to_send)
-        throw new Error("Критическая ошибка: Конечная сумма транзакции изменена бэкендом или перехвачена!")
+        throw new Error("Критическая ошибка: Конечная сумма транзакции изменена бэкендом или перехвачен!")
       }
 
       console.log("💪 Снапшот-аудит пройден успешно! Данные чисты.")

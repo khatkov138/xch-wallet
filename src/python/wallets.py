@@ -13,13 +13,27 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
     ph_map, addrs = {}, []
     for i in idxs:
         ph = puzzle_for_pk(get_wallet_pk_unhardened(master_pk, i)).get_tree_hash()
-        ph_hex = ph.hex()
+        ph_hex = ph.hex().lower()
         ph_map[ph_hex] = {"index": i}
         addrs.append({"index": i, "puzzle_hash": f"0x{ph_hex}", "xch": "0.0", "mojo": 0, "coins_count": 0})
         
-    res = (await client.post(f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
-        json={"puzzle_hashes": list(ph_map.keys()), "include_spent_coins": True, "start_height": 0})).json()
-    if not res.get("success"): raise HTTPException(status_code=400, detail=f"Node Err: {res.get('error')}")
+    try:
+        response = await client.post(
+            f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
+            json={"puzzle_hashes": list(ph_map.keys()), "include_spent_coins": True, "start_height": 0},
+            timeout=30.0 # 🛠 Увеличиваем таймаут для тяжелого мейннета
+        )
+        res = response.json()
+    except Exception as rpc_err:
+        # Если нода вообще умерла или сбросила соединение
+        print(f"❌ [CRITICAL RPC ERROR] Не удалось связаться с нодой: {str(rpc_err)}")
+        raise HTTPException(status_code=500, detail=f"RPC Connection Failed: {str(rpc_err)}")
+        
+    if not res.get("success"): 
+        node_error = res.get('error') or "Unknown Chia RPC error (empty error field)"
+        print(f"❌ [NODE ERROR REPORTED]: {node_error}") # Выводим в консоль сервера
+        raise HTTPException(status_code=400, detail=f"Node Err: {node_error}")
+        
     return {"records": res.get("coin_records", []), "ph_map": ph_map, "addresses": addrs}
 
 @wallet_router.get("/dashboard")
@@ -71,6 +85,7 @@ async def get_wallet_dashboard(
                 total_scanned = len(idxs)
 
         total_mojo, tx_map, active_bal = 0, {}, {0}
+        unspent_coins_list = [] # 🎯 Собираем массив живых монет для фронтенда
         
         # Маппинг lookups строго привязан к хэшу puzzle_hash без 0x
         addr_lookups = {a["puzzle_hash"].replace("0x", ""): a for a in global_addrs}
@@ -84,11 +99,21 @@ async def get_wallet_dashboard(
             if not spent:
                 active_bal.add(idx)
                 total_mojo += amt
-                # 🎯 ФИКС: Убрали кривой inline синтаксис. Теперь всё пишется чисто и работает стабильно
+                
                 if ph_clean in addr_lookups:
                     addr_lookups[ph_clean]["mojo"] += amt
                     addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
                     addr_lookups[ph_clean]["coins_count"] += 1
+                
+                # 🎯 Записываем живую монету в кэш-структуру
+                unspent_coins_list.append({
+                    "wallet_index": idx,
+                    "coin": {
+                        "parent_coin_info": c["parent_coin_info"],
+                        "puzzle_hash": c["puzzle_hash"],
+                        "amount": amt
+                    }
+                })
             
             ts = r.get("timestamp", int(time.time()))
             
@@ -115,23 +140,8 @@ async def get_wallet_dashboard(
         return {
             "meta": {"mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
             "balance": {"total_xch": str(total_mojo / 1e12), "total_mojo": str(total_mojo), "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] == 0]},
+            "unspent_coins": unspent_coins_list, # 🎯 Отдаем готовые UTXO на фронтенд
             "transactions": txs[:50]
         }
     except HTTPException as h: raise h
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
-
-@wallet_router.get("/track-tx/{tx_id}/{coin_id}")
-async def track_transaction_status(tx_id: str, coin_id: str):
-    try:
-        cert, key = get_ssl_credentials()
-        c_tx, c_coin = f"0x{tx_id.replace('0x', '').strip()}", f"0x{coin_id.replace('0x', '').strip()}"
-        async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
-            cr = (await c.post(f"{BASE_RPC_URL}/get_coin_record_by_name", json={"name": c_coin})).json()
-            rec = cr.get("coin_record")
-            if rec and rec.get("spent", False):
-                return {"success": True, "status": "confirmed", "block_height": rec.get("spent_block_index"), "timestamp": rec.get("timestamp")}
-            mp = (await c.post(f"{BASE_RPC_URL}/get_mempool_item_by_tx_id", json={"tx_id": c_tx})).json()
-            if mp.get("success") and mp.get("mempool_item"):
-                return {"success": True, "status": "pending", "fee": mp["mempool_item"].get("fee"), "npc_result": mp["mempool_item"].get("npc_result", {}).get("conds", {})}
-            return {"success": False, "status": "not_found", "reason": "Kicked or never existed"}
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))

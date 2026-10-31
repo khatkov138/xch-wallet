@@ -41,16 +41,7 @@ export function AddressCard() {
   // Карточка готова, когда строка адреса успешно собрана в bech32m
   const isLoaded = !isDashboardLoading && address0 !== ""
 
-  useEffect(() => {
-    console.log("📊 [AddressCard Live Debug]:", {
-      isDashboardLoading,
-      totalAddresses: addresses?.length || 0,
-      puzzleHash,
-      address0,
-      currentPrefix
-    })
-  }, [isDashboardLoading, addresses, puzzleHash, address0, currentPrefix])
-
+ 
   const copyAddress = async () => {
     if (!isLoaded) return
     try {

@@ -18,4 +18,10 @@ app.include_router(wallet_router)
 app.include_router(tx_router)
 
 if __name__ == "__main__":
-    pass
+    uvicorn.run(
+        "server:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=["src/python"] # Если server.py лежит в src/python, можно просто "." или ["."]
+    )
