@@ -2,6 +2,7 @@
 import bip39 from 'bip39';
 import chiaBls, { AugSchemeMPL } from 'chia-bls';
 import { sha256 } from '@noble/hashes/sha2'
+import { bech32m } from "bech32"
 
 const { PrivateKey } = chiaBls
 
@@ -46,6 +47,19 @@ function hexToBytes(hex: string): Uint8Array {
         bytes[i / 2] = parseInt(cleanHex.substring(i, i + 2), 16);
     }
     return bytes;
+}
+
+export function puzzleHashToAddress(puzzleHash: string, prefix: string): string {
+  if (!puzzleHash || !prefix) return ""
+  try {
+    const cleanHash = puzzleHash.startsWith("0x") ? puzzleHash.slice(2) : puzzleHash
+    const bytes = hexToBytes(cleanHash)
+    const words = bech32m.toWords(bytes)
+    return bech32m.encode(prefix, words)
+  } catch (err) {
+    console.error("❌ Ошибка кодирования адреса:", err)
+    return ""
+  }
 }
 
 /**

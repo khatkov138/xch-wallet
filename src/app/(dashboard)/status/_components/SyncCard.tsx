@@ -55,9 +55,7 @@ export function SyncCard({
             </span>
           </div>
 
-          <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-lg ${badgeClass}`}>
-            {isSynced ? "Synced" : "Syncing"}
-          </span>
+        
         </div>
 
         {/* Блок прогресс-бара и высот */}

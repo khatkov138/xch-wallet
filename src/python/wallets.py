@@ -1,9 +1,8 @@
 import httpx, time
 from fastapi import APIRouter, HTTPException, Query
 from chia_rs import G1Element
-from chia.util.bech32m import encode_puzzle_hash
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
-from shared import get_wallet_pk_unhardened, TESTNET_PREFIX, BASE_RPC_URL, get_ssl_credentials
+from shared import get_wallet_pk_unhardened, BASE_RPC_URL, get_ssl_credentials
 
 wallet_router = APIRouter(prefix="/api/wallet", tags=["Wallets Engine"])
 GAP, MAX_LIM = 40, 1000
@@ -14,9 +13,9 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
     ph_map, addrs = {}, []
     for i in idxs:
         ph = puzzle_for_pk(get_wallet_pk_unhardened(master_pk, i)).get_tree_hash()
-        ph_hex, addr = ph.hex(), encode_puzzle_hash(ph, TESTNET_PREFIX)
-        ph_map[ph_hex] = {"index": i, "address": addr}
-        addrs.append({"index": i, "address": addr, "puzzle_hash": f"0x{ph_hex}", "xch": "0.0", "mojo": 0, "coins_count": 0})
+        ph_hex = ph.hex()
+        ph_map[ph_hex] = {"index": i}
+        addrs.append({"index": i, "puzzle_hash": f"0x{ph_hex}", "xch": "0.0", "mojo": 0, "coins_count": 0})
         
     res = (await client.post(f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
         json={"puzzle_hashes": list(ph_map.keys()), "include_spent_coins": True, "start_height": 0})).json()
@@ -64,7 +63,6 @@ async def get_wallet_dashboard(
                 try: idxs = [int(i.strip()) for i in active_indexes.split(",") if i.strip().isdigit() and int(i) < MAX_LIM]
                 except: idxs = []
                 max_a = max(idxs, default=0)
-                # Жесткий зажим — 0 и 1 индексы железно в пуле + активные + хвост сдачи
                 idxs = list(set([0, 1] + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
                 chunk = await scan_chunk(master_pk, idxs, client)
                 records.extend(chunk["records"])
@@ -73,40 +71,42 @@ async def get_wallet_dashboard(
                 total_scanned = len(idxs)
 
         total_mojo, tx_map, active_bal = 0, {}, {0}
-        addr_lookups = {a["index"]: a for a in global_addrs}
+        
+        # Маппинг lookups строго привязан к хэшу puzzle_hash без 0x
+        addr_lookups = {a["puzzle_hash"].replace("0x", ""): a for a in global_addrs}
         
         for r in records:
             c = r["coin"]
             amt, ph_clean, spent = c["amount"], c["puzzle_hash"].replace("0x", ""), r.get("spent", False)
             if ph_clean not in global_map: continue
-            idx, addr = global_map[ph_clean]["index"], global_map[ph_clean]["address"]
+            idx = global_map[ph_clean]["index"]
             
             if not spent:
                 active_bal.add(idx)
                 total_mojo += amt
-                if idx in addr_lookups:
-                    addr_lookups[idx]["mojo"] += amt
-                    addr_lookups[idx]["xch"] = str(addr_lookups[idx]["mojo"] / 1e12)
-                    addr_lookups[idx]["coins_count"] += 1
+                # 🎯 ФИКС: Убрали кривой inline синтаксис. Теперь всё пишется чисто и работает стабильно
+                if ph_clean in addr_lookups:
+                    addr_lookups[ph_clean]["mojo"] += amt
+                    addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
+                    addr_lookups[ph_clean]["coins_count"] += 1
             
             ts = r.get("timestamp", int(time.time()))
             
-            # 🟢 ДОБАВЛЯЕМ "parent_coin_info" ТУДА И ТУДА
             tx_map[f"in_{c['parent_coin_info']}_{amt}"] = {
                 "tx_id": c["parent_coin_info"][:16], 
-                "parent_coin_info": c["parent_coin_info"], # <--- ВОТ ОНО
+                "parent_coin_info": c["parent_coin_info"], 
                 "type": "incoming", 
                 "amount": str(amt / 1e12), 
-                "address": addr, 
+                "puzzle_hash": f"0x{ph_clean}", 
                 "timestamp": ts
             }
             if spent: 
                 tx_map[f"out_{c['parent_coin_info']}_{amt}"] = {
                     "tx_id": c["parent_coin_info"][:16], 
-                    "parent_coin_info": c["parent_coin_info"], # <--- ВОТ ОНО
+                    "parent_coin_info": c["parent_coin_info"], 
                     "type": "outgoing", 
                     "amount": str(amt / 1e12), 
-                    "address": addr, 
+                    "puzzle_hash": f"0x{ph_clean}", 
                     "timestamp": ts
                 }
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)

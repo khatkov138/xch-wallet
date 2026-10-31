@@ -2,7 +2,7 @@
 
 import React from "react"
 import { RefreshCw } from "lucide-react"
-import { useWalletBalance } from "@/hooks/useWalletBalance"
+import { useWalletDashboard } from "@/hooks/useWalletDashboard" // Единый корневой хук
 
 function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
@@ -15,12 +15,12 @@ function formatStringBalance(xchString: string | number, decimals: number = 4): 
 }
 
 export function BalanceSection() {
-  // Хук берет данные из глобального кэша wallet-dashboard БЕЗ лишних сетевых вызовов
-  const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletBalance()
+  // 🎯 ИСПРАВИЛИ: Убрали аргумент (true), так как хук теперь полностью автономный
+  const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletDashboard()
 
   const balanceXCH = error ? "0.0000" : formatStringBalance(realXCHStr, 4)
   const balanceUSD = error
-    ? "⚠️ Ошибка: не удалось обновить кэш"
+    ? "⚠️ Ошибка обновления данных"
     : `≈ $${(numericXCH * 2.00).toFixed(2)} USD`
 
   const isError = Boolean(error)
@@ -32,7 +32,7 @@ export function BalanceSection() {
         <span>Доступный баланс</span>
         <button
           onClick={() => refetch()}
-          disabled={isFetching} // Жесткий блок спама кликами, пока идет сетевой запрос дашборда
+          disabled={isFetching} // Блокируем спам кликами, пока react-query обновляет кэш дашборда
           className={`text-zinc-500 hover:text-white p-1 rounded transition-colors cursor-pointer disabled:pointer-events-none ${
             isFetching ? "animate-spin text-[#FF2E93]" : ""
           }`}

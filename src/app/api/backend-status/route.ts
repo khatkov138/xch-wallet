@@ -16,7 +16,7 @@ export async function GET() {
   }
 
   return NextResponse.json(
-    { status: 'unhealthy', message: 'Python бэкенд НЕ ДОСТУПЕН!' }, 
+    { status: 'unhealthy', message: 'error' }, 
     { status: 503 }
   );
 }

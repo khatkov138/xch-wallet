@@ -13,10 +13,15 @@ interface WalletHeaderProps {
 
 export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps) {
   const { hardResetWallet } = useWalletAuth()
-  const { isPythonDown, isRpcDown, isNotSynced } = useWalletStatus()
+  
+  // 🎯 Достаем nodeData из твоего глобального хука статуса ноды
+  const { isPythonDown, isRpcDown, isNotSynced, nodeData } = useWalletStatus()
 
   const isDash = variant === "dashboard"
-  const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
+
+  // 🎯 БОЛЬШЕ НИКАКИХ .ENV! Динамически определяем, тестнет ли это, по данным из RPC
+  const networkName = nodeData?.network || "mainnet"
+  const isTestnet = networkName.toLowerCase().includes("testnet")
 
   const handleResetWallet = () => {
     hardResetWallet()
@@ -56,7 +61,8 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
               ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5"
               : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
           }`}>
-            {isTestnet ? "TESTNET 11" : "MAINNET"}
+            {/* ТУТ ТЕПЕРЬ АКТУАЛОЧКА: Выводим либо реальное имя тестнета большими буквами, либо MAINNET */}
+            {isTestnet ? networkName.toUpperCase() : "MAINNET"}
           </span>
         ) : (
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest px-1">
@@ -69,7 +75,7 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
       {isDash ? (
         <div className="flex items-center gap-2">
           
-          {/* 🎯 ТЕПЕРЬ КЛИКАБЕЛЬНО: Обернули бейдж в Next.js Link. Наведение имеет мягкий транзишн ховера */}
+          {/* КЛИКАБЕЛЬНО: Обернули бейдж в Next.js Link */}
           <Link
             href="/status"
             className={`text-[10px] font-bold border px-2.5 py-0.5 rounded-full flex items-center gap-1.5 transition-all duration-200 cursor-pointer active:scale-95 ${statusBadgeClass}`}

@@ -5,7 +5,6 @@ import { X, Copy, Check, Share2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import QRCode from "qrcode"
-import { useWalletBalance } from "@/hooks/useWalletBalance" // 👈 Твой хук баланса
 
 // 🔥 ИСПРАВЛЕНИЕ: Убрали walletAddress из пропсов, модалка теперь независима
 interface ReceiveModalProps {
@@ -15,12 +14,12 @@ interface ReceiveModalProps {
 
 export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
   // 1. Вытаскиваем массив адресов из твоего хука баланса
-  const { addresses } = useWalletBalance()
+
   const [copied, setCopied] = useState(false)
   const [qrSvg, setQrSvg] = useState<string>("")
 
   // Достаем самый первый сгенерированный адрес (Index 0)
-  const walletAddress = addresses?.[0]?.address ?? ""
+  const walletAddress =  "txchadress"
   const isAddressLoaded = walletAddress && walletAddress.trim() !== ""
 
   // Векторная генерация QR-кода прямо в браузере без внешних запросов

@@ -1,27 +1,29 @@
 'use client'
 
 import React, { useState } from "react"
-import { ArrowUpRight, ArrowDownLeft, Layers, Clock, CheckCircle2, AlertCircle } from "lucide-react"
+import { ArrowUpRight, ArrowDownLeft, Layers, Clock, CheckCircle2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useQuery } from "@tanstack/react-query"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useWalletDashboard } from "@/hooks/useWalletDashboard"
+import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { puzzleHashToAddress } from "@/lib/utils/crypto" // 🎯 ИМПОРТИРУЕМ ТВОЮ УТИЛИТУ
 
-const formatAddress = (addr: string) => addr ? `${addr.slice(0, 6)}...${addr.slice(-6)}` : "Неизвестный адрес"
+const formatAddressShort = (addr: string) => addr && addr !== "Неизвестный адрес" ? `${addr.slice(0, 6)}...${addr.slice(-6)}` : "Неизвестный адрес"
 const formatDate = (ts: number) => ts ? new Date(ts * 1000).toLocaleDateString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "Только что"
 
 export function ActivityList() {
-  const { unhardenedPkHex, activeIndexes } = useWalletSession() as any
   const [selectedTx, setSelectedTx] = useState<any>(null)
 
-  const dashboardQuery = useQuery<any>({
-    queryKey: ["wallet-dashboard", unhardenedPkHex, activeIndexes],
-    queryFn: () => null as any,
-    enabled: false,
-  })
+  // 1. Забираем реактивные транзакции из единого кэша дашборда
+  const { transactions, isLoading: isDashboardLoading } = useWalletDashboard()
+  
+  // 2. Забираем реальную сеть ноды для префиксов
+  const { nodeData } = useWalletStatus()
+  const networkName = nodeData?.network || "mainnet"
+  const currentPrefix = networkName.toLowerCase().includes("testnet") ? "txch" : "xch"
 
-  const transactions = dashboardQuery.data?.transactions || []
-
+  // 3. Запрос трекинга статуса транзакции из мемпула
   const { data: txStatus, isLoading: isStatusLoading } = useQuery({
     queryKey: ["track-tx", selectedTx?.tx_id, selectedTx?.parent_coin_info],
     queryFn: () => fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/wallet/track-tx/${selectedTx.tx_id}/${selectedTx.parent_coin_info || selectedTx.tx_id}`).then(r => r.json()),
@@ -38,22 +40,26 @@ export function ActivityList() {
 
       <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
         <CardContent className="p-2 space-y-1 max-h-[350px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-zinc-800">
-          {dashboardQuery.isLoading || !dashboardQuery.data ? (
+          {isDashboardLoading ? (
             <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider animate-pulse">Загрузка истории...</div>
           ) : transactions.length === 0 ? (
             <div className="p-4 text-center text-[10px] font-medium text-zinc-500 uppercase tracking-wider">История транзакций пуста</div>
           ) : (
             transactions.map((tx: any, index: number) => {
               const isIncoming = tx.type === "incoming"
+              
+              // 🎯 На лету собираем правильный bech32m адрес из puzzle_hash через твою утилиту
+              const rawAddress = puzzleHashToAddress(tx.puzzle_hash, currentPrefix)
+
               return (
-                <div key={`${tx.tx_id || "tx"}_${index}`} onClick={() => setSelectedTx(tx)} className="flex items-center justify-between p-2.5 hover:bg-zinc-900/40 rounded-xl transition-colors cursor-pointer active:scale-[0.99]">
+                <div key={`${tx.tx_id || "tx"}_${index}`} onClick={() => setSelectedTx({ ...tx, computedAddress: rawAddress })} className="flex items-center justify-between p-2.5 hover:bg-zinc-900/40 rounded-xl transition-colors cursor-pointer active:scale-[0.99]">
                   <div className="flex items-center gap-3">
                     <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${isIncoming ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}>
                       {isIncoming ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
                     </div>
                     <div>
                       <p className="text-xs font-bold text-white">{isIncoming ? "Получено XCH" : "Отправлено XCH"}</p>
-                      <p className="text-[10px] font-medium text-zinc-500">{formatAddress(tx.address)}</p>
+                      <p className="text-[10px] font-medium text-zinc-500">{formatAddressShort(rawAddress)}</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -89,7 +95,10 @@ export function ActivityList() {
               </div>
 
               <div className="space-y-2 bg-zinc-900/10 p-3 border border-zinc-900/40 rounded-xl">
-                <div className="flex justify-between items-start"><span className="text-zinc-500 font-semibold min-w-[70px]">Адрес:</span><div className="text-right font-mono text-zinc-300 break-all max-w-[200px]">{selectedTx.address}</div></div>
+                <div className="flex justify-between items-start">
+                  <span className="text-zinc-500 font-semibold min-w-[70px]">Адрес:</span>
+                  <div className="text-right font-mono text-zinc-300 break-all max-w-[200px]">{selectedTx.computedAddress}</div>
+                </div>
                 <div className="flex justify-between items-center h-5"><span className="text-zinc-500 font-semibold">Короткий TX ID:</span><span className="font-mono bg-zinc-900 px-1.5 py-0.5 rounded text-zinc-400 text-[10px] uppercase">{selectedTx.tx_id}</span></div>
                 <div className="flex justify-between items-center h-5"><span className="text-zinc-500 font-semibold">Время события:</span><span className="text-zinc-300 font-medium">{formatDate(selectedTx.timestamp)}</span></div>
               </div>
@@ -108,7 +117,14 @@ export function ActivityList() {
                 </div>
               )}
 
-              <a href={`/explorer/tx/${selectedTx.parent_coin_info}`} onClick={() => console.log(`🔗 Переход на локальный эксплорер: ${selectedTx.parent_coin_info}`)} className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold text-[10px] uppercase tracking-wider rounded-xl transition-colors text-center cursor-pointer">Открыть во внутреннем эксплорере</a>
+              <a 
+                href={`https://chiaexplorer.com{selectedTx.parent_coin_info}`} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold text-[10px] uppercase tracking-wider rounded-xl transition-colors text-center"
+              >
+                Посмотреть в Explorer
+              </a>
             </div>
           )}
         </DialogContent>

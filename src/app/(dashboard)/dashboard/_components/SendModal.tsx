@@ -74,7 +74,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
             <>
               <div>
                 <label className="block text-xs font-semibold text-zinc-400 mb-1.5">Адрес получателя</label>
-                <input type="text" placeholder="txch1..." value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} disabled={loading} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#FF2E93] transition-colors disabled:opacity-50" required />
+                <input type="text" placeholder="xch1..." value={targetAddress} onChange={(e) => setTargetAddress(e.target.value)} disabled={loading} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#FF2E93] transition-colors disabled:opacity-50" required />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-zinc-400 mb-1.5">Сумма (XCH)</label>

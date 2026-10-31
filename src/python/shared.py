@@ -1,9 +1,9 @@
 import os, requests, urllib3, hashlib
 from pathlib import Path
 from chia_rs import AugSchemeMPL, G1Element
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 BASE_RPC_URL = "https://localhost:8555"
-TESTNET_PREFIX = "txch"
 
 def get_ssl_credentials():
     home = Path.home()

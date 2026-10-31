@@ -42,21 +42,32 @@ interface ConnectionsResponse {
   connections: ChiaConnection[];
 }
 
+interface NetworkInfoResponse {
+  success: boolean;
+  network_name: string; // Четкое имя сети из RPC
+}
+
+// Хелпер для человекочитаемого размера сети
+function formatNetworkSpace(spaceBytes: number): string {
+  if (!spaceBytes) return "0.00 TiB";
+  const tib = spaceBytes / Math.pow(1024, 4);
+  if (tib >= 1024 * 1024) {
+    return `${(tib / (1024 * 1024)).toFixed(2)} EiB`;
+  }
+  if (tib >= 1024) {
+    return `${(tib / 1024).toFixed(2)} PiB`;
+  }
+  return `${tib.toFixed(2)} TiB`;
+}
+
 export async function GET(): Promise<NextResponse> {
   return createApiResponse(async () => {
-    const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true";
-    const networkFolder = isTestnet ? "testnet11" : "mainnet";
     const homeDir = process.env.USERPROFILE || os.homedir() || process.env.HOME || "C:\\Users\\khatk";
 
-    let sslPath = path.join(homeDir, ".chia", networkFolder, "config", "ssl", "full_node");
+    // Сертификаты берем строго из папки mainnet
+    let sslPath = path.join(homeDir, ".chia", "mainnet", "config", "ssl", "full_node");
     let certPath = path.join(sslPath, "private_full_node.crt");
     let keyPath = path.join(sslPath, "private_full_node.key");
-
-    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      sslPath = path.join(homeDir, ".chia", "mainnet", "config", "ssl", "full_node");
-      certPath = path.join(sslPath, "private_full_node.crt");
-      keyPath = path.join(sslPath, "private_full_node.key");
-    }
 
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
       sslPath = `C:\\Users\\khatk\\.chia\\mainnet\\config\\ssl\\full_node`;
@@ -65,7 +76,7 @@ export async function GET(): Promise<NextResponse> {
     }
 
     if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      throw new Error(`SSL-сертификаты Full Node отсутствуют в системе.`);
+      throw new Error(`SSL-сертификаты Full Node отсутствуют в папке mainnet.`);
     }
 
     const agent = new https.Agent({
@@ -102,19 +113,20 @@ export async function GET(): Promise<NextResponse> {
       });
     };
 
-    const [stateData, connData] = await Promise.all([
+    // Делаем ровно 3 параллельных запроса к RPC ноды
+    const [netData, stateData, connData] = await Promise.all([
+      fetchChiaRpc<NetworkInfoResponse>("get_network_info"),
       fetchChiaRpc<BlockchainStateResponse>("get_blockchain_state"),
       fetchChiaRpc<ConnectionsResponse>("get_connections")
     ]);
 
-    if (!stateData.success || !connData.success) {
+    if (!netData.success || !stateData.success || !connData.success) {
       throw new Error("Chia RPC вернул success: false");
     }
 
     const state = stateData.blockchain_state;
     const currentHeight = state.peak?.height ?? 0;
     
-    // Исправляем логику таргет-высоты: если нода говорит synced, значит таргет равен текущей высоте
     const targetHeight = state.sync.synced 
       ? currentHeight 
       : (state.sync.sync_tip_height > 0 ? state.sync.sync_tip_height : currentHeight);
@@ -126,23 +138,21 @@ export async function GET(): Promise<NextResponse> {
       progressPercent = ((currentHeight / targetHeight) * 100).toFixed(4);
     }
 
-    // Никакой отсебятины. Только ISO строка времени блока или null, если блока нет
     const peakTime = state.peak && state.peak.timestamp > 0
       ? new Date(state.peak.timestamp * 1000).toISOString()
       : null;
 
     const fullNodeConnections = connData.connections.filter(c => c.type === 1);
 
-    // Сухой возврат данных без лишнего текста
     return {
-      network: networkFolder,
+      network: netData.network_name, // Поле железно возвращает строку ('mainnet' или 'testnet11') прямо из RPC
       isSynced: state.sync.synced,
       isSyncingMode: state.sync.sync_mode,
       currentHeight,
       targetHeight,
       progressPercent,
       difficulty: state.difficulty ?? 0,
-      networkSpaceTib: state.space ? (state.space / Math.pow(1024, 4)).toFixed(2) : "0.00",
+      networkSpaceFormatted: formatNetworkSpace(state.space),
       peakTime,
       totalPeers: fullNodeConnections.length,
       peersList: fullNodeConnections.map(c => ({
