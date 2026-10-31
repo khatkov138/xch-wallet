@@ -1,9 +1,10 @@
 'use client'
 
 import React from "react"
+import Link from "next/link"
 import { LogOut } from "lucide-react"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
-// ⚡ ЗАМЕНИЛИ СТОР НА НАШ УМНЫЙ ХУК-ФАСАД
+import { useWalletStatus } from "@/hooks/useWalletStatus"
 
 interface WalletHeaderProps {
   variant: "auth" | "dashboard"
@@ -11,19 +12,32 @@ interface WalletHeaderProps {
 }
 
 export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps) {
-  // Достаем метод полной очистки сессии и блокировки из хука
   const { hardResetWallet } = useWalletAuth()
+  const { isPythonDown, isRpcDown, isNotSynced } = useWalletStatus()
 
   const isDash = variant === "dashboard"
   const isTestnet = process.env.NEXT_PUBLIC_IS_TESTNET === "true"
 
   const handleResetWallet = () => {
-    // Хук под капотом сам очистит и localStorage, и sessionStorage
     hardResetWallet()
-    // Перенаправляем на страницу авторизации/создания
     window.location.href = "/auth"
-
   }
+
+  // Расчет динамического статуса для шапки
+  let statusText = "Online"
+  let statusBadgeClass = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15"
+  let statusDotClass = "bg-emerald-400"
+
+  if (isPythonDown || isRpcDown) {
+    statusText = "Offline"
+    statusBadgeClass = "text-[#FF2E93] bg-[#FF2E93]/10 border-[#FF2E93]/20 hover:bg-[#FF2E93]/15"
+    statusDotClass = "bg-[#FF2E93]"
+  } else if (isNotSynced) {
+    statusText = "Syncing"
+    statusBadgeClass = "text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15"
+    statusDotClass = "bg-amber-500"
+  }
+
   return (
     <header className="flex items-center justify-between w-full pt-2 select-none">
 
@@ -31,15 +45,17 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
       <div className="flex items-center gap-2">
         <div className="relative flex items-center justify-center bg-white text-black font-black text-sm px-3.5 py-1.5 rounded-xl tracking-tight shadow-md">
           XCH<span className="text-[#FF2E93]">A</span>
-          <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF2E93] border border-zinc-950 ${isDash ? "animate-pulse" : ""
-            }`} />
+          <span className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-[#FF2E93] border border-zinc-950 ${
+            isDash ? "animate-pulse" : ""
+          }`} />
         </div>
 
         {isDash ? (
-          <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md border transition-all duration-300 ${isTestnet
-            ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5"
-            : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
-            }`}>
+          <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-0.5 rounded-md border transition-all duration-300 ${
+            isTestnet
+              ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5"
+              : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
+          }`}>
             {isTestnet ? "TESTNET 11" : "MAINNET"}
           </span>
         ) : (
@@ -49,13 +65,20 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
         )}
       </div>
 
-      {/* ПРАВАЯ КОЛОНКА: Статус и выход */}
+      {/* ПРАВАЯ КОЛОНКА: Статус сети и выход */}
       {isDash ? (
         <div className="flex items-center gap-2">
-          <div className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Онлайн
-          </div>
+          
+          {/* 🎯 ТЕПЕРЬ КЛИКАБЕЛЬНО: Обернули бейдж в Next.js Link. Наведение имеет мягкий транзишн ховера */}
+          <Link
+            href="/status"
+            className={`text-[10px] font-bold border px-2.5 py-0.5 rounded-full flex items-center gap-1.5 transition-all duration-200 cursor-pointer active:scale-95 ${statusBadgeClass}`}
+            title="Open network status node monitor"
+          >
+            <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${statusDotClass}`} />
+            {statusText}
+          </Link>
+
           <button
             onClick={handleResetWallet}
             title="Выйти из кошелька"

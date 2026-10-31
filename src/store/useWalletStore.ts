@@ -4,22 +4,28 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval'
 
-// 🛡️ 1. КАСТОМНЫЙ ДВИЖОК ДЛЯ INDEXEDDB (Через idb-keyval)
+// Проверяем, находимся ли мы на клиенте (в браузере)
+const isClient = typeof window !== 'undefined'
+
+// 🛡️ 1. КАСТОМНЫЙ ДВИЖОК ДЛЯ INDEXEDDB (С защитой от серверного рендеринга Next.js)
 const indexedDBStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
+    if (!isClient) return null
     return (await idbGet(name)) || null
   },
   setItem: async (name: string, value: string): Promise<void> => {
+    if (!isClient) return
     await idbSet(name, value)
   },
   removeItem: async (name: string): Promise<void> => {
+    if (!isClient) return
     await idbDel(name)
   },
 }
 
 // 🛡️ 2. БЕЗОПАСНЫЙ ВЫБОР ДЛЯ СЕССИИ (Используем sessionStorage вместо localStorage)
 const dummyStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
-const getSessionStorage = () => (typeof window !== 'undefined' ? sessionStorage : dummyStorage)
+const getSessionStorage = () => (isClient ? sessionStorage : dummyStorage)
 
 
 // ==========================================

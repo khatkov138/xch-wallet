@@ -1,11 +1,11 @@
 'use client'
 
 import React from "react"
-import { WalletHeader } from "./WalletHeader"
 import Link from "next/link"
 import { Server } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
-import { handleApi } from "@/lib/utils"
+import { WalletHeader } from "./WalletHeader"
+import Pulse from "@/components/Pulse"
+import { useWalletStatus } from "@/hooks/useWalletStatus"
 
 interface WalletLayoutProps {
   children: React.ReactNode
@@ -13,44 +13,41 @@ interface WalletLayoutProps {
   version?: string
 }
 
-interface NodeShortStatus {
-  isSynced: boolean
-}
-
 export function WalletLayout({ children, variant, version }: WalletLayoutProps) {
-
-  const { data: nodeData, isError, isLoading } = useQuery<NodeShortStatus>({
-    queryKey: ['chiaNodeStatus'],
-    queryFn: () => handleApi<NodeShortStatus>(fetch("/api/rpc/node-status")),
-
-    refetchInterval: 30000,
-    staleTime: 5000,
-  })
+  // Пассивно забираем состояние системы из единого кэша хука
+  const { nodeData, isPythonDown, isRpcDown } = useWalletStatus();
 
   let nodeStatusText = "..."
   let statusColorClass = "text-zinc-600"
 
-  if (isError) {
+  if (isPythonDown || isRpcDown) {
+    // 🛑 КРИТИЧЕСКАЯ ОШИБКА: Сервер или RPC лежат — горит розовым
     nodeStatusText = "Error"
     statusColorClass = "text-[#FF2E93] animate-pulse font-black"
-  } else if (isLoading) {
-    nodeStatusText = "..."
-    statusColorClass = "text-zinc-500 animate-pulse"
   } else if (nodeData) {
     if (nodeData.isSynced) {
+      // ✅ ВСЁ ОТЛИЧНО: Нода полностью синхронизирована — горит зеленым
       nodeStatusText = "Synced"
       statusColorClass = "text-emerald-500 font-bold"
     } else {
+      // 🎯 ИСПРАВЛЕНО: Идет докачка блоков — горит янтарным (в цвет плашки Pulse)
       nodeStatusText = "Syncing"
-      statusColorClass = "text-[#FF2E93] animate-pulse"
+      statusColorClass = "text-amber-500 animate-pulse font-bold"
     }
+  } else {
+    // Начальное состояние до завершения первого запроса хука
+    nodeStatusText = "..."
+    statusColorClass = "text-zinc-500 animate-pulse"
   }
 
   return (
     <div className="relative z-10 w-full max-w-md mx-auto px-6 flex-1 flex flex-col justify-between py-10">
-
+      
       <div className="w-full flex-1 flex flex-col justify-between">
         <div className="w-full space-y-6">
+          {/* Изолированная по высоте верхняя плашка */}
+          <Pulse />
+
           <WalletHeader variant={variant} version={version} />
           <main className="w-full animate-in fade-in duration-300">
             {children}
@@ -59,9 +56,8 @@ export function WalletLayout({ children, variant, version }: WalletLayoutProps) 
       </div>
 
       <footer className="w-full text-center pt-8 flex flex-col items-center gap-3">
-
         <div className="flex items-center justify-center gap-4 w-full border-t border-zinc-900/60 pt-4">
-
+          
           <a
             href="https://github.com"
             target="_blank"
@@ -77,18 +73,15 @@ export function WalletLayout({ children, variant, version }: WalletLayoutProps) 
 
           <span className="text-zinc-800 text-[10px] select-none">•</span>
 
-          {/* Изменено: теперь используется понятное слово СЕТЬ */}
           <Link
             href="/status"
             className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-400 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase"
             title="Открыть панель мониторинга сети Chia"
           >
-            <Server
-              size={12}
-              className={statusColorClass}
-            />
+            <Server size={12} className={statusColorClass} />
             <span>Сеть: <span className={statusColorClass}>{nodeStatusText}</span></span>
           </Link>
+
         </div>
 
         <p className="text-[9px] font-bold text-zinc-700 uppercase tracking-widest mt-1">

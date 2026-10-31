@@ -30,7 +30,9 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-zinc-950 text-white font-sans select-none">
         {/* Обертываем все дочерние страницы в контекст TanStack Query */}
+
         <Providers>
+        
           {children}
         </Providers>
       </body>
