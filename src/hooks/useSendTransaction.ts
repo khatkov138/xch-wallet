@@ -52,7 +52,7 @@ export function useSendTransaction({
 
   // --- МУТАЦИЯ ШАГА 1: Запрос на сборку транзакции ---
  
-  const buildBundleMutation = useMutation({
+ const buildBundleMutation = useMutation({
     mutationFn: async () => {
       if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
 
@@ -66,32 +66,22 @@ export function useSendTransaction({
       let selectedItems = []
       let accumulatedAmount = 0
 
-      // Сначала проверяем, есть ли ОДНА монета на индексе 0, которая закроет всю сумму
-      const singleSuitable = unspentCoins.find(
-        (item: any) => item.wallet_index === 0 && item.coin.amount >= required
-      )
+      // 🎯 В ТУПУЮ СХОДУ: Сортируем абсолютно ВСЕ монеты от больших к мелким (b - a)
+      const sortedCoins = [...unspentCoins]
+        .sort((a: any, b: any) => b.coin.amount - a.coin.amount)
 
-      if (singleSuitable) {
-        selectedItems = [singleSuitable]
-        accumulatedAmount = singleSuitable.coin.amount
-      } else {
-        // 🎯 ФИКС: Фильтруем массив строго по wallet_index === 0, полностью игнорируя 169, 170, 175 и т.д.
-        const sortedCoins = [...unspentCoins]
-          .filter((item: any) => item.wallet_index === 0) // СМОТРИМ ТОЛЬКО НА ИНДЕКС 0
-          .sort((a: any, b: any) => b.coin.amount - a.coin.amount) // Сортируем от жирных к мелким
-
-        for (const item of sortedCoins) {
-          selectedItems.push(item)
-          accumulatedAmount += item.coin.amount
-          if (accumulatedAmount >= required) {
-            break // Набрали нужную сумму — выходим
-          }
+      // Складываем монеты в массив, пока не наберется нужная сумма
+      for (const item of sortedCoins) {
+        selectedItems.push(item)
+        accumulatedAmount += item.coin.amount
+        if (accumulatedAmount >= required) {
+          break // Набрали сумму — выходим
         }
       }
 
-      // Если даже после цикла по монетам с 0-го индекса сумма не набралась — выкидываем ошибку
+      // Если после прохода по всем монетам сумма не набралась — выкидываем ошибку
       if (accumulatedAmount < required) {
-        throw new Error(`Недостаточно монет на главном адресе для покрытия суммы и комиссии! Набрано: ${accumulatedAmount} / Требуется: ${required} mojo`)
+        throw new Error(`Недостаточно монет на всех адресах кошелька! Набрано: ${accumulatedAmount} / Требуется: ${required} mojo`)
       }
 
       // 2. ФОРМИРОВАНИЕ МАССИВА INPUTS ДЛЯ БЭКЕНДА
@@ -109,7 +99,7 @@ export function useSendTransaction({
         return {
           coin_pk_hex: coinPkHex,
           coin_to_spend: item.coin,
-          wallet_index: item.wallet_index // 🎯 Прокидываем индекс деривации конкретной монеты наружу
+          wallet_index: item.wallet_index // 🎯 Прокидываем оригинальный индекс деривации конкретной монеты наружу
         }
       })
 
@@ -155,7 +145,6 @@ export function useSendTransaction({
       setLocalSnapshot(null)
     }
   })
-
 const sendTxMutation = useMutation({
     mutationFn: async () => {
       // КРИТИЧЕСКИЙ ЧЕК: Проверяем наличие массива индексов деривации монет
@@ -223,6 +212,8 @@ const sendTxMutation = useMutation({
         console.log(`  [Монета #${idx}] -> Деривация по индексу: ${currentWalletIndex}`)
         console.log(`    - Хэш для подписи (msgHex): ${msgHex}`)
 
+
+        
         // Вызываем твою оригинальную функцию подписи
         const sig = signChiaTransaction({
           mnemonic: clearMnemonic,
@@ -254,17 +245,7 @@ const sendTxMutation = useMutation({
         solution: cs.solution
       }))
 
-      // 🎯 ГЛУБОКОЕ ЛОГИРОВАНИЕ COIN_SPENDS ПЕРЕД ОТПРАВКОЙ
-      console.log("📦 [КОНСОЛЬ-ЛОГ] КРИТИЧЕСКИЙ АНАЛИЗ COIN_SPENDS ДЛЯ БЭКЕНДА:")
-      cleanCoinSpends.forEach((cs:any, index:number) => {
-         console.log(`🔹 Спенд #${index} (Индекс деривации по логике: ${walletIndexesList[index]}):`);
-         console.log(`  - Parent Coin Info: ${cs.coin.parent_coin_info}`);
-         console.log(`  - Puzzle Hash: ${cs.coin.puzzle_hash}`);
-         console.log(`  - Amount (mojos): ${cs.coin.amount}`);
-         console.log(`  - Puzzle Reveal (hex): ${cs.puzzle_reveal.slice(0, 50)}...`);
-         console.log(`  - Solution (hex): ${cs.solution}`);
-      });
-
+   
       // Пушим агрегированный массив на бэкенд
       const res = await fetch("/api/v1/transactions/send-tx", {
         method: "POST",

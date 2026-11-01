@@ -104,33 +104,60 @@ async def build_spend_bundle(
                 donor_coin = parsed_coins[idx]["coin_obj"]
                 lead_conds.append(PyProgram.to([62, donor_coin.name()]))
 
+               # =====================================================================
+        # 3. СБОРКА COIN_SPENDS И ГЕНЕРАЦИЯ ХЭШЕЙ СООБЩЕНИЙ (ПРАВИЛЬНЫЙ ВАРИАНТ)
         # =====================================================================
+               # =====================================================================
         # 3. СБОРКА COIN_SPENDS И ГЕНЕРАЦИЯ ХЭШЕЙ СООБЩЕНИЙ
         # =====================================================================
         coin_spends_json_list = []
         messages_to_sign = []
         
+        print("\n=== STARTING SPEND BUNDLE DEBUG ===")
+        print(f"Genesis Challenge: {genesis.hex()}")
+        
         for idx, item in enumerate(parsed_coins):
             coin = item["coin_obj"]
             puzzle = item["py_puzzle"]
             
+            # Получаем исходный публичный ключ из инпута для отладки
+            raw_pk_hex = inputs[idx]["coin_pk_hex"].replace("0x", "")
+            
             if idx == 0:
                 current_conds = lead_conds
+                print(f"\n[Lead Coin Index 0] Coin ID: {coin.name().hex()}")
             else:
-                # Каждая монета-донор вместо создания дублирующих монет 
-                # просто утверждает анонс от главной монеты (Код 63 = ASSERT_PUZZLE_ANNOUNCEMENT)
-                # Хэш анонса = SHA256(puzzle_hash_первой_монеты + ID_текущей_монеты)
+                # Каждая монета-донор утверждает анонс от главной монеты (Код 63 = ASSERT_PUZZLE_ANNOUNCEMENT)
                 import hashlib
                 announcement_message = lead_coin.puzzle_hash + coin.name()
                 announcement_hash = hashlib.sha256(announcement_message).digest()
+                
                 current_conds = [PyProgram.to([63, announcement_hash])]
+                print(f"\n[Donor Coin Index {idx}] Coin ID: {coin.name().hex()}")
             
-            py_sol = solution_for_conditions(PyProgram.to(current_conds))
-            coin_spend = CoinSpend(coin, Program.from_bytes(bytes(puzzle)), Program.from_bytes(bytes(py_sol)))
+            # Оборачиваем условия в валидную программу-список
+            formatted_program = PyProgram.to(current_conds)
+            py_sol = solution_for_conditions(formatted_program)
             
-            # СТРОГО ТВОЙ ОРИГИНАЛЬНЫЙ КОД РАСЧЕТА ХЭША (НЕ ТРОНУТ)
-            msg_hex = (py_sol.rest().first().get_tree_hash() + coin.name() + genesis).hex()
+            # Расчет Chialisp дерева условий
+            conditions_tree_hash = py_sol.rest().first().get_tree_hash()
+            
+            # ВАЖНО: Нода Chia для стандартного кошелька ожидает, что подпись AGG_SIG_ME 
+            # валидирует сообщение по формуле: conditions_tree_hash + coin_name + genesis_challenge
+            msg_bytes = conditions_tree_hash + coin.name() + genesis
+            msg_hex = msg_bytes.hex()
             messages_to_sign.append(msg_hex)
+            
+            # Выводим подробные компоненты хэша в консоль бэка
+            print(f"  -> Input Raw Public Key: {raw_pk_hex}")
+            print(f"  -> Conditions Tree Hash: {conditions_tree_hash.hex()}")
+            print(f"  -> Final Sign Message (Hex): {msg_hex}")
+            
+            coin_spend = CoinSpend(
+                coin, 
+                Program.from_bytes(bytes(puzzle)), 
+                Program.from_bytes(bytes(py_sol))
+            )
             
             coin_spends_json_list.append({
                 "coin": {
@@ -141,6 +168,10 @@ async def build_spend_bundle(
                 "puzzle_reveal": "0x" + bytes(coin_spend.puzzle_reveal).hex(), 
                 "solution": "0x" + bytes(coin_spend.solution).hex()
             })
+            
+        print("\n=== END OF SPEND BUNDLE DEBUG ===\n")
+
+
             
         return {
             "success": True, 
@@ -216,6 +247,11 @@ async def send_tx(
                 status_code=503, 
                 detail="Нода Chia сейчас синхронизируется с сетью и временно не принимает транзакции. Пожалуйста, подождите несколько минут и повторите отправку."
             )
+        if "ALREADY_INCLUDING_TRANSACTION" in node_error:
+            raise HTTPException(
+                status_code=503, 
+                detail="Transaction already sent."
+            )    
 
         return {"success": False, "error": node_error}
 
