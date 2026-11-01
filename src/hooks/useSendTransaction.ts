@@ -54,7 +54,7 @@ export function useSendTransaction({
  
   const buildBundleMutation = useMutation({
     mutationFn: async () => {
-      if (!targetAddress || !amount) throw new Error("Заполните адрес and сумму")
+      if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
 
       const xch = parseFloat(amount.trim().replace(",", "."))
       if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
@@ -63,42 +63,71 @@ export function useSendTransaction({
       const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
       const required = totalMojosToSend + totalFeeMojos
 
-      // ВЫБОР КОИНА: Ищем подходящую монету на индексе 0
-      const suitableItem = unspentCoins.find(
+      let selectedItems = []
+      let accumulatedAmount = 0
+
+      // Сначала проверяем, есть ли ОДНА монета на индексе 0, которая закроет всю сумму
+      const singleSuitable = unspentCoins.find(
         (item: any) => item.wallet_index === 0 && item.coin.amount >= required
       )
 
-      if (!suitableItem) {
-        throw new Error("На основном адресе (индекс 0) недостаточно монет для покрытия суммы и комиссии!")
+      if (singleSuitable) {
+        selectedItems = [singleSuitable]
+        accumulatedAmount = singleSuitable.coin.amount
+      } else {
+        // 🎯 ФИКС: Фильтруем массив строго по wallet_index === 0, полностью игнорируя 169, 170, 175 и т.д.
+        const sortedCoins = [...unspentCoins]
+          .filter((item: any) => item.wallet_index === 0) // СМОТРИМ ТОЛЬКО НА ИНДЕКС 0
+          .sort((a: any, b: any) => b.coin.amount - a.coin.amount) // Сортируем от жирных к мелким
+
+        for (const item of sortedCoins) {
+          selectedItems.push(item)
+          accumulatedAmount += item.coin.amount
+          if (accumulatedAmount >= required) {
+            break // Набрали нужную сумму — выходим
+          }
+        }
       }
 
-      // 🎯 МАГИЯ ОПТИМИЗАЦИИ: Находим публичный ключ адреса по совпадению puzzle_hash монеты
-      const matchedAddressData = walletAddresses.find(
-        (addr: any) => addr.puzzle_hash.toLowerCase() === suitableItem.coin.puzzle_hash.toLowerCase()
-      )
-
-      const coinPkHex = matchedAddressData?.address_pubkey_hex
-
-      if (!coinPkHex) {
-        throw new Error("Критическая ошибка: Публичный ключ для этой монеты не найден в кэше адресов дашборда!")
+      // Если даже после цикла по монетам с 0-го индекса сумма не набралась — выкидываем ошибку
+      if (accumulatedAmount < required) {
+        throw new Error(`Недостаточно монет на главном адресе для покрытия суммы и комиссии! Набрано: ${accumulatedAmount} / Требуется: ${required} mojo`)
       }
 
-      // Запоминаем локальный снапшот для Шага 2 
+      // 2. ФОРМИРОВАНИЕ МАССИВА INPUTS ДЛЯ БЭКЕНДА
+      const inputs = selectedItems.map((item: any) => {
+        // Находим публичный ключ для каждой конкретной монеты по её puzzle_hash
+        const matchedAddressData = walletAddresses.find(
+          (addr: any) => addr.puzzle_hash.toLowerCase() === item.coin.puzzle_hash.toLowerCase()
+        )
+        const coinPkHex = matchedAddressData?.address_pubkey_hex
+
+        if (!coinPkHex) {
+          throw new Error(`Критическая ошибка: Публичный ключ для монеты ${item.coin.puzzle_hash.slice(0, 10)}... не найден!`)
+        }
+
+        return {
+          coin_pk_hex: coinPkHex,
+          coin_to_spend: item.coin,
+          wallet_index: item.wallet_index // 🎯 Прокидываем индекс деривации конкретной монеты наружу
+        }
+      })
+
+      // Запоминаем локальный снапшот (берем walletIndex первой ведущей монеты)
       const snapshot: LocalSnapshot & { walletIndex: number } = {
         targetAddress: targetAddress.trim(),
         mojosToSend: totalMojosToSend,
         feeMojos: totalFeeMojos,
-        walletIndex: suitableItem.wallet_index
+        walletIndex: selectedItems[0].wallet_index
       }
       setLocalSnapshot(snapshot)
 
-      // Стучимся на обновленный транзакционный бэкенд
+      // 3. ОТПРАВКА НА БЭКЕНД
       const res = await fetch("api/v1/transactions/build-spend-bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          coin_pk_hex: coinPkHex, // 🎯 Передаем найденный чистый ключ
-          coin_to_spend: suitableItem.coin,
+          inputs: inputs, // Отправляем сформированный массив монет
           send_to_address: snapshot.targetAddress,
           mojos_to_send: snapshot.mojosToSend,
           fee_mojos: snapshot.feeMojos
@@ -106,12 +135,13 @@ export function useSendTransaction({
       })
 
       const result = await res.json()
+      console.log("📥 [КОНСОЛЬ-ЛОГ] Ответ бэка на Шаге 1:", result)
       if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить транзакцию")
 
-      // Возвращаем индекс в стейт, чтобы Шаг 2 отработал без багов
+      // 🎯 МАГИЯ: Возвращаем массив индексов для каждого сообщения, чтобы Шаг 2 знал, чем подписывать!
       return {
         ...result,
-        target_wallet_index: snapshot.walletIndex
+        target_wallet_indexes: inputs.map(i => i.wallet_index)
       }
     },
     onSuccess: (data) => {
@@ -126,77 +156,129 @@ export function useSendTransaction({
     }
   })
 
-  // --- МУТАЦИЯ ШАГА 2: Математический аудит, подписание и пуш ---
-  const sendTxMutation = useMutation({
+const sendTxMutation = useMutation({
     mutationFn: async () => {
-      if ((preparedSpendData?.target_wallet_index ?? null) === null || !pin || !localSnapshot) return
+      // КРИТИЧЕСКИЙ ЧЕК: Проверяем наличие массива индексов деривации монет
+      if (!preparedSpendData?.target_wallet_indexes || !pin || !localSnapshot) {
+        throw new Error("Критическая ошибка: отсутствуют индексы деривации или локальный снапшот!")
+      }
       if (pin.length !== 6) throw new Error("ПИН-код должен состоять из 6 цифр")
 
-      const coinSource = preparedSpendData.coin_spend.coin
-      const parentHex = coinSource.parent_coin_info
-      const puzzleHashHex = coinSource.puzzle_hash
-      const amountMojo = coinSource.amount
+      console.log("\n========================================================")
+      console.log("🔍 [ШАГ 2] ЗАПУЩЕН МУЛЬТИ-ВХОДНОЙ КРИПТО-АУДИТ...")
+      console.log("========================================================")
 
-      console.log("🔍 [ШАГ 2] Начинаем крипто-аудит монеты...")
+      // Достаем массивы из ответа Шага 1
+      const coinSpendsList = preparedSpendData.coin_spends
+      const messagesList = preparedSpendData.messages_to_sign_hex
+      const walletIndexesList = preparedSpendData.target_wallet_indexes
 
-      // 1. Математический аудит (Coin ID) — Проверка, что бэк не подсунул левый хэш сообщения
-      const trueCoinId = calculateChiaCoinId(parentHex, puzzleHashHex, amountMojo)
-      const fullMessageHex = preparedSpendData.message_to_sign_hex.toLowerCase().trim();
-      const coinIdFromMessage = fullMessageHex.substring(64, 128);
-
-      if (coinIdFromMessage !== trueCoinId) {
-        console.error("❌ КРИТИЧЕСКАЯ АТАКА! Coin ID не совпадают!")
-        throw new Error("Критическая атака! Бэкенд подменил монету-источник внутри хэша подписи!")
+      if (!coinSpendsList || !messagesList || coinSpendsList.length !== messagesList.length) {
+        throw new Error("Критическая ошибка: Несоответствие структуры данных спендов и сообщений подписи!")
       }
 
-      // 🛡️ 2. АУДИТ ЧЕРЕЗ СНАПШОТ: Полное отсечение доверия к данным бэка
-      console.log("📸 Проверяем соответствие данных с локальным снапшотом...")
+      // 1. Циклический математический аудит КАЖДОЙ монеты
+      for (let i = 0; i < coinSpendsList.length; i++) {
+        const coinSource = coinSpendsList[i].coin
+        const parentHex = coinSource.parent_coin_info
+        const puzzleHashHex = coinSource.puzzle_hash
+        const amountMojo = coinSource.amount
 
-      // Сверяем адрес получателя
+        const trueCoinId = calculateChiaCoinId(parentHex, puzzleHashHex, amountMojo)
+        const fullMessageHex = messagesList[i].toLowerCase().trim()
+        const coinIdFromMessage = fullMessageHex.substring(64, 128)
+
+        console.log(`📡 [Аудит монеты #${i}]`)
+        console.log(`   - Ожидаемый Coin ID: ${trueCoinId}`)
+        console.log(`   - Извлеченный из сообщения Coin ID: ${coinIdFromMessage}`)
+
+        if (coinIdFromMessage !== trueCoinId) {
+          console.error(`❌ КРИТИЧЕСКАЯ АТАКА! Coin ID не совпали на монете #${i}!`)
+          throw new Error(`Критическая атака! Бэкенд подменил монету-источник #${i} внутри хэша подписи!`)
+        }
+      }
+      console.log("💪 Математический аудит всех инпутов пройден успешно!")
+
+      // 🛡️ 2. АУДИТ ЧЕРЕЗ СНАПШОТ: Сверяем данные с локальным стейтом
+      console.log("\n📸 Проверяем соответствие данных с локальным снапшотом...")
       if (preparedSpendData.verified_target_address !== localSnapshot.targetAddress) {
         console.error("❌ ПОДМЕНА АДРЕСА: Бэк вернул левый адрес!", preparedSpendData.verified_target_address)
         throw new Error("Критическая ошибка: Конечный адрес получателя изменен бэкендом или перехвачен!")
       }
 
-      // Сверяем сумму в mojo
       if (preparedSpendData.verified_mojos_to_send !== localSnapshot.mojosToSend) {
         console.error("❌ ПОДМЕНА СУММЫ: Бэк изменил сумму!", preparedSpendData.verified_mojos_to_send)
         throw new Error("Критическая ошибка: Конечная сумма транзакции изменена бэкендом или перехвачен!")
       }
-
       console.log("💪 Снапшот-аудит пройден успешно! Данные чисты.")
 
-      // --- Дальше идет твой стандартный неизмененный код подписания и fetch ---
+      // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ ВСЕХ СООБЩЕНИЙ С ЛОГАМИ РАЗРЯДНОСТИ
       setStatusMessage("🔐 Подписание транзакции...")
       const clearMnemonic = await getMnemonicForSigning(pin)
 
-      const signatureHex = signChiaTransaction({
-        mnemonic: clearMnemonic,
-        walletIndex: preparedSpendData.target_wallet_index,
-        messageHex: preparedSpendData.message_to_sign_hex,
-        hiddenPuzzleHashHex: preparedSpendData.hidden_puzzle_hash_hex
-      })
+      console.log("\n🔑 [КРИПТОГРАФИЯ: ПОДПИСАНИЕ ИНПУТОВ]")
+      const signatures = messagesList.map((msgHex: any, idx: number) => {
+        const currentWalletIndex = walletIndexesList[idx]
+        
+        console.log(`  [Монета #${idx}] -> Деривация по индексу: ${currentWalletIndex}`)
+        console.log(`    - Хэш для подписи (msgHex): ${msgHex}`)
 
+        // Вызываем твою оригинальную функцию подписи
+        const sig = signChiaTransaction({
+          mnemonic: clearMnemonic,
+          walletIndex: currentWalletIndex, // Передаем точный динамический индекс монеты (0, 169, 170...)
+          messageHex: msgHex,
+          hiddenPuzzleHashHex: preparedSpendData.hidden_puzzle_hash_hex
+        })
+
+        console.log(`    - Сгенерированная сигнатура (длина: ${sig.length} симв.): 0x${sig.slice(0, 20)}...`)
+        
+        if (sig.length !== 192) {
+          console.error(`❌ Ошибка разрядности! Длина подписи ${sig.length} вместо 192.`);
+        }
+
+        return sig
+      })
+      console.log("========================================================\n")
+      
       setStatusMessage("🚀 Отправка пакета трат в сеть...")
 
-      const cleanCoinSpend = {
-        coin: { parent_coin_info: parentHex, puzzle_hash: puzzleHashHex, amount: amountMojo },
-        puzzle_reveal: preparedSpendData.coin_spend.puzzle_reveal,
-        solution: preparedSpendData.coin_spend.solution
-      }
+      // Формируем чистый массив коин-спендов для отправки на бэк
+      const cleanCoinSpends = coinSpendsList.map((cs: any) => ({
+        coin: {
+          parent_coin_info: cs.coin.parent_coin_info,
+          puzzle_hash: cs.coin.puzzle_hash,
+          amount: cs.coin.amount
+        },
+        puzzle_reveal: cs.puzzle_reveal,
+        solution: cs.solution
+      }))
 
+      // 🎯 ГЛУБОКОЕ ЛОГИРОВАНИЕ COIN_SPENDS ПЕРЕД ОТПРАВКОЙ
+      console.log("📦 [КОНСОЛЬ-ЛОГ] КРИТИЧЕСКИЙ АНАЛИЗ COIN_SPENDS ДЛЯ БЭКЕНДА:")
+      cleanCoinSpends.forEach((cs:any, index:number) => {
+         console.log(`🔹 Спенд #${index} (Индекс деривации по логике: ${walletIndexesList[index]}):`);
+         console.log(`  - Parent Coin Info: ${cs.coin.parent_coin_info}`);
+         console.log(`  - Puzzle Hash: ${cs.coin.puzzle_hash}`);
+         console.log(`  - Amount (mojos): ${cs.coin.amount}`);
+         console.log(`  - Puzzle Reveal (hex): ${cs.puzzle_reveal.slice(0, 50)}...`);
+         console.log(`  - Solution (hex): ${cs.solution}`);
+      });
+
+      // Пушим агрегированный массив на бэкенд
       const res = await fetch("/api/v1/transactions/send-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          signature_hex: signatureHex,
-          coin_spend: cleanCoinSpend,
+          signatures_list: signatures,
+          coin_spends: cleanCoinSpends,
           integrity_token: preparedSpendData.integrity_token,
-          message_signed_hex: preparedSpendData.message_to_sign_hex
+          messages_signed_hex: messagesList
         })
       })
 
       const result = await res.json()
+      console.log("📥 [КОНСОЛЬ-ЛОГ] Финальный ответ бэка на Шаге 2:", result)
       if (!res.ok || !result.success) throw new Error(result.detail || "Нода отклонила транзакцию")
       return result
     },
@@ -207,7 +289,7 @@ export function useSendTransaction({
       setPinAttempts(0)
     },
     onError: (err: any) => {
-      console.error("❌ Ошибка на Шаге 2:", err)
+      console.error("❌ Ошибка на Шаге 2 во фронтенде:", err)
       const nextAttempts = pinAttempts + 1
       setPinAttempts(nextAttempts)
       setPin("")
@@ -219,6 +301,8 @@ export function useSendTransaction({
       }
     }
   })
+
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

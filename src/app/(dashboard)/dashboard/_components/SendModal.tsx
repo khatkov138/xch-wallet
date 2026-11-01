@@ -12,13 +12,13 @@ const SERVICE_FEE_MOJO = 100000000, SERVICE_FEE_XCH_STR = "0.0001 XCH"
 
 export function SendModal({ isOpen, onClose }: SendModalProps) {
   const [targetAddress, setTargetAddress] = useState(""), [amount, setAmount] = useState("")
-  const [customFeeMojo, setCustomFeeMojo] = useState("5000000"), [pin, setPin] = useState("")
+  const [customFeeMojo, setCustomFeeMojo] = useState("50000000"), [pin, setPin] = useState("")
   const { unspentCoins, addresses } = useWalletDashboard()
   const { step, setStep, loading, statusMessage, handleSubmit, resetHooksState } = useSendTransaction({
     targetAddress, amount, customFeeMojo, pin, setPin, onClose, unspentCoins, walletAddresses: addresses
   })
 
-  useEffect(() => { if (!isOpen) { setTargetAddress(""); setAmount(""); setCustomFeeMojo("5000000"); resetHooksState() } }, [isOpen])
+  useEffect(() => { if (!isOpen) { setTargetAddress(""); setAmount(""); setCustomFeeMojo("50000000"); resetHooksState() } }, [isOpen])
   if (!isOpen) return null
 
   const getFeeInXchString = () => {
