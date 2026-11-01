@@ -191,24 +191,15 @@ export async function deriveMasterPublicKey(mnemonic: string): Promise<string> {
 
 export function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
     const parentPkBytes = parentSk.getG1().toBytes();
-    
-    // 🎯 ФИКС ТУТ: Заменяем твою intToBytes4 на гарантированный Big-Endian буфер из 4 байт
-    // Это заставит числа 169, 172 и т.д. кодироваться криптографически правильно
-    const indexBytes = new Uint8Array(4);
-    new DataView(indexBytes.buffer).setUint32(0, index, false); // false = Big-Endian
-    
+    const indexBytes = intToBytes4(index);
     const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
-    concat.set(parentPkBytes, 0); 
-    concat.set(indexBytes, parentPkBytes.length);
-    
+    concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
     const hash = sha256(concat);
     const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
     const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
     const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
-    
     return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
 }
-
 
 export function calculateSyntheticSecretKey(
     targetSk: InstanceType<typeof PrivateKey>,
