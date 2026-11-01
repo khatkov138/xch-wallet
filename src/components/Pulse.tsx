@@ -3,18 +3,21 @@ import { ShieldAlert, Loader2 } from 'lucide-react';
 import { useWalletStatus } from "@/hooks/useWalletStatus";
 
 export default function Pulse() {
-  const { isPythonDown, isRpcDown, isNotSynced, nodeData } = useWalletStatus();
+  const { isPythonDown, isRpcDown, isNotSynced, hasError, isLoading, nodeData } = useWalletStatus();
+
+  // 🎯 ЗАЩИТА 1: Пока идет первая загрузка и данных нет — ничего не показываем (убираем ложное мигание)
+  if (isLoading && !nodeData) return null;
+
+  // 🎯 ЗАЩИТА 2: Если нода синхронизирована и нет критических ошибок — полностью скрываем плашку
+  if (nodeData?.isSynced === true && !hasError) return null;
 
   // Проверяем состояние инициализации ноды (фейковые 100% при старте)
   const isInitializing = isNotSynced && nodeData && (
-    nodeData.currentHeight === nodeData.targetHeight || 
+    nodeData.currentHeight === nodeData.targetHeight ||
     nodeData.progressPercent === "100.0000"
   );
 
-  // Если всё работает идеально и нода синхронизирована — плашка полностью скрывается
-  if (!isPythonDown && !isRpcDown && !isNotSynced) return null;
-
-  // 🎯 РАСЧЕТ ПРИОРИТЕТОВ И СТИЛЕЙ ДЛЯ ОДНОЙ УМНОЙ ПЛАШКИ
+  // Стили и тексты по умолчанию
   let title = "Технические работы";
   let description = "Проблема с сетью кошелька...";
   let borderColorClass = "border-zinc-900/50";
@@ -23,21 +26,21 @@ export default function Pulse() {
   let isLoaderActive = false;
 
   if (isPythonDown) {
-    // 1. Критическая ошибка — упал питон
+    // 1. Упал питоновский бэк
     title = "Сервер отключен";
     description = "Потеряно соединение с бэкендом API";
     borderColorClass = "border-red-500/20";
     badgeColorClass = "text-red-400";
     dotColorClass = "bg-red-500";
   } else if (isRpcDown) {
-    // 2. Средняя ошибка — отвалился RPC ноды
+    // 2. Питон работает, но демоны Chia / RPC лежат
     title = "Сбой RPC ноды";
     description = "Ошибка mTLS авторизации Full Node";
     borderColorClass = "border-red-500/20";
     badgeColorClass = "text-[#FF2E93]";
     dotColorClass = "bg-[#FF2E93]";
   } else if (isNotSynced) {
-    // 3. Штатный режим синхронизации — включаем крутилку
+    // 3. Штатный режим синхронизации
     title = "Синхронизация сети";
     borderColorClass = "border-zinc-900/50";
     badgeColorClass = "text-amber-400";
@@ -53,9 +56,8 @@ export default function Pulse() {
 
   return (
     <div className="w-full h-[54px] mb-2 animate-in fade-in slide-in-from-top-2 duration-300">
-      {/* 🎯 ОДНА УМНАЯ КАРТОЧКА: Меняет цвета и контент на лету */}
       <div className={`flex items-center gap-3 p-3 bg-zinc-900/20 border rounded-[24px] h-full ${borderColorClass}`}>
-        
+
         {/* Иконка / Вращающийся спиннер */}
         <div className="h-7 w-7 rounded-xl flex items-center justify-center bg-zinc-800 shrink-0">
           {isLoaderActive ? (
@@ -64,7 +66,7 @@ export default function Pulse() {
             <ShieldAlert size={14} className={badgeColorClass} />
           )}
         </div>
-        
+
         {/* Текстовая зона */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">

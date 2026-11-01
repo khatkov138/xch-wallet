@@ -6,12 +6,13 @@ import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
 
 interface UseSendTransactionProps {
   targetAddress: string
-  amount: string  
+  amount: string
   customFeeMojo: string
   pin: string
   setPin: (pin: string) => void
   onClose: () => void
-  unspentCoins: any[] // 🎯 ПРИНЯЛИ: Сюда прокидываем массив монет из хука useWalletDashboard
+  unspentCoins: any[]      // Массив легких монет
+  walletAddresses: any[]   // 🎯 ПРИНЯЛИ: Новый массив адресов с address_pubkey_hex
 }
 
 interface LocalSnapshot {
@@ -27,7 +28,8 @@ export function useSendTransaction({
   pin,
   setPin,
   onClose,
-  unspentCoins // 🎯 ПРИНЯЛИ
+  unspentCoins,
+  walletAddresses
 }: UseSendTransactionProps) {
   const [step, setStep] = useState<1 | 2>(1)
   const [pinAttempts, setPinAttempts] = useState(0)
@@ -36,7 +38,6 @@ export function useSendTransaction({
   const [localSnapshot, setLocalSnapshot] = useState<LocalSnapshot | null>(null)
 
   const { getMnemonicForSigning } = useWalletAuth()
-  const masterPkHex = useWalletSession((state) => state.unhardenedPkHex)
 
   const resetHooksState = () => {
     setPin("")
@@ -50,10 +51,10 @@ export function useSendTransaction({
   }
 
   // --- МУТАЦИЯ ШАГА 1: Запрос на сборку транзакции ---
+ 
   const buildBundleMutation = useMutation({
     mutationFn: async () => {
-      if (!masterPkHex) throw new Error("Сессия не найдена")
-      if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
+      if (!targetAddress || !amount) throw new Error("Заполните адрес and сумму")
 
       const xch = parseFloat(amount.trim().replace(",", "."))
       if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
@@ -62,9 +63,7 @@ export function useSendTransaction({
       const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
       const required = totalMojosToSend + totalFeeMojos
 
-      // 🎯 ВЫБОР КОИНА: Логика один-в-один как была на бэкенде по дефолту
-      // Ищем среди непотраченных монет ту, что лежит на индексе 0 и имеет достаточный баланс
-      
+      // ВЫБОР КОИНА: Ищем подходящую монету на индексе 0
       const suitableItem = unspentCoins.find(
         (item: any) => item.wallet_index === 0 && item.coin.amount >= required
       )
@@ -73,20 +72,33 @@ export function useSendTransaction({
         throw new Error("На основном адресе (индекс 0) недостаточно монет для покрытия суммы и комиссии!")
       }
 
-      const snapshot: LocalSnapshot = {
+      // 🎯 МАГИЯ ОПТИМИЗАЦИИ: Находим публичный ключ адреса по совпадению puzzle_hash монеты
+      const matchedAddressData = walletAddresses.find(
+        (addr: any) => addr.puzzle_hash.toLowerCase() === suitableItem.coin.puzzle_hash.toLowerCase()
+      )
+
+      const coinPkHex = matchedAddressData?.address_pubkey_hex
+
+      if (!coinPkHex) {
+        throw new Error("Критическая ошибка: Публичный ключ для этой монеты не найден в кэше адресов дашборда!")
+      }
+
+      // Запоминаем локальный снапшот для Шага 2 
+      const snapshot: LocalSnapshot & { walletIndex: number } = {
         targetAddress: targetAddress.trim(),
         mojosToSend: totalMojosToSend,
-        feeMojos: totalFeeMojos
+        feeMojos: totalFeeMojos,
+        walletIndex: suitableItem.wallet_index
       }
       setLocalSnapshot(snapshot)
 
-      const res = await fetch("http://localhost:8000/api/v1/transactions/build-spend-bundle", {
+      // Стучимся на обновленный транзакционный бэкенд
+      const res = await fetch("api/v1/transactions/build-spend-bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          master_pk_hex: masterPkHex,
-          wallet_index: suitableItem.wallet_index, // 🎯 передаем индекс кошелька (0)
-          coin_to_spend: suitableItem.coin,       // 🎯 передаем саму купюру
+          coin_pk_hex: coinPkHex, // 🎯 Передаем найденный чистый ключ
+          coin_to_spend: suitableItem.coin,
           send_to_address: snapshot.targetAddress,
           mojos_to_send: snapshot.mojosToSend,
           fee_mojos: snapshot.feeMojos
@@ -95,7 +107,12 @@ export function useSendTransaction({
 
       const result = await res.json()
       if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить транзакцию")
-      return result
+
+      // Возвращаем индекс в стейт, чтобы Шаг 2 отработал без багов
+      return {
+        ...result,
+        target_wallet_index: snapshot.walletIndex
+      }
     },
     onSuccess: (data) => {
       console.log("➡️ [ШАГ 1] Данные успешно получены с бэкенда:", data)
@@ -168,7 +185,7 @@ export function useSendTransaction({
         solution: preparedSpendData.coin_spend.solution
       }
 
-      const res = await fetch("http://localhost:8000/api/v1/transactions/send-tx", {
+      const res = await fetch("/api/v1/transactions/send-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

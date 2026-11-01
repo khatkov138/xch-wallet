@@ -1,4 +1,4 @@
-import httpx, time
+import os, httpx, time
 from fastapi import APIRouter, HTTPException, Query
 from chia_rs import G1Element
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
@@ -12,26 +12,39 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
     
     ph_map, addrs = {}, []
     for i in idxs:
-        ph = puzzle_for_pk(get_wallet_pk_unhardened(master_pk, i)).get_tree_hash()
+        wallet_pk = get_wallet_pk_unhardened(master_pk, i)
+        ph = puzzle_for_pk(wallet_pk).get_tree_hash()
         ph_hex = ph.hex().lower()
+        
+        # Переводим G1Element в байты и гекс
+        pubkey_hex_string = "0x" + bytes(wallet_pk).hex()
+        
         ph_map[ph_hex] = {"index": i}
-        addrs.append({"index": i, "puzzle_hash": f"0x{ph_hex}", "xch": "0.0", "mojo": 0, "coins_count": 0})
+        
+        # 🎯 ОПТИМИЗАЦИЯ: Добавляем поле address_pubkey_hex строго ОДИН РАЗ на весь адрес!
+        addrs.append({
+            "index": i, 
+            "puzzle_hash": f"0x{ph_hex}", 
+            "address_pubkey_hex": pubkey_hex_string, # 🔥 Ключ теперь живет здесь
+            "xch": "0.0", 
+            "mojo": 0, 
+            "coins_count": 0
+        })
         
     try:
         response = await client.post(
             f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
             json={"puzzle_hashes": list(ph_map.keys()), "include_spent_coins": True, "start_height": 0},
-            timeout=30.0 # 🛠 Увеличиваем таймаут для тяжелого мейннета
+            timeout=30.0
         )
         res = response.json()
     except Exception as rpc_err:
-        # Если нода вообще умерла или сбросила соединение
         print(f"❌ [CRITICAL RPC ERROR] Не удалось связаться с нодой: {str(rpc_err)}")
         raise HTTPException(status_code=500, detail=f"RPC Connection Failed: {str(rpc_err)}")
         
     if not res.get("success"): 
         node_error = res.get('error') or "Unknown Chia RPC error (empty error field)"
-        print(f"❌ [NODE ERROR REPORTED]: {node_error}") # Выводим в консоль сервера
+        print(f"❌ [NODE ERROR REPORTED]: {node_error}")
         raise HTTPException(status_code=400, detail=f"Node Err: {node_error}")
         
     return {"records": res.get("coin_records", []), "ph_map": ph_map, "addresses": addrs}
@@ -64,20 +77,19 @@ async def get_wallet_dashboard(
                     
                     if max_act != -1 and (cur_end - max_act) < GAP:
                         new_end = min(max_act + GAP + 1, MAX_LIM)
-                        print(f"⚠️ [GAP TRIGGERED] Последняя монета на индексе {max_act}. До края чанка ({cur_end}) меньше {GAP} пустых мест.")
-                        print(f"🔄 [AUTO-EXPANSION] Расширяем рамки сканирования. Следующий шаг: от {cur_end} до {new_end}")
                         cur_start, cur_end = cur_end, new_end
                     else: 
-                        if max_act != -1:
-                            print(f"✅ [GAP SAFE] Последняя монета на индексе {max_act}. Свободная зона до края чанка ({cur_end}) составляет {cur_end - max_act} адресов. Останавливаемся.")
-                        else:
-                            print(f"💤 [GAP CLEAN] В этом чанке вообще нет активности. Вышли в чистую пустыню. Выходим.")
                         break
             else:
                 try: idxs = [int(i.strip()) for i in active_indexes.split(",") if i.strip().isdigit() and int(i) < MAX_LIM]
                 except: idxs = []
+                
+                # 🎯 ИСПРАВЛЕНИЕ БАГА СЛЕПОТЫ: Включаем первые 10 индексов в принудительный пул для опроса ноды.
+                # Теперь, если монета упадет на индекс 1-9, кошелек мгновенно зафиксирует её в light режиме.
+                base_pool = list(range(0, 10))
                 max_a = max(idxs, default=0)
-                idxs = list(set([0, 1] + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
+                idxs = list(set(base_pool + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
+                
                 chunk = await scan_chunk(master_pk, idxs, client)
                 records.extend(chunk["records"])
                 global_map.update(chunk["ph_map"])
@@ -85,9 +97,8 @@ async def get_wallet_dashboard(
                 total_scanned = len(idxs)
 
         total_mojo, tx_map, active_bal = 0, {}, {0}
-        unspent_coins_list = [] # 🎯 Собираем массив живых монет для фронтенда
+        unspent_coins_list = []
         
-        # Маппинг lookups строго привязан к хэшу puzzle_hash без 0x
         addr_lookups = {a["puzzle_hash"].replace("0x", ""): a for a in global_addrs}
         
         for r in records:
@@ -105,7 +116,8 @@ async def get_wallet_dashboard(
                     addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
                     addr_lookups[ph_clean]["coins_count"] += 1
                 
-                # 🎯 Записываем живую монету в кэш-структуру
+                # 🎯 ОПТИМИЗАЦИЯ: Поле coin_pubkey_hex ПОЛНОСТЬЮ УБРАНО из монет!
+                # JSON стал весить в разы меньше
                 unspent_coins_list.append({
                     "wallet_index": idx,
                     "coin": {
@@ -135,12 +147,19 @@ async def get_wallet_dashboard(
                     "timestamp": ts
                 }
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)
-        print(f"🏁 [DASHBOARD SUCCESS] Всего опрошено адресов за этот вызов: {total_scanned} | Живых индексов с балансом: {sorted(list(active_bal))}\n")
+        print(f"🏁 [DASHBOARD SUCCESS] Всего опрошено адресов: {total_scanned} | Живых индексов: {sorted(list(active_bal))}\n")
         
+        # 🎯 КОРРЕКТИРОВКА ФИЛЬТРАЦИИ НА ВЫХОДЕ:
+        # В режиме light отдаем только адреса с монетами, но ПРИНУДИТЕЛЬНО оставляем весь базовый пул (0-9).
+        # Это гарантирует, что UI SendModal отобразит карточки начальных индексов для мониторинга UTXO.
         return {
             "meta": {"mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
-            "balance": {"total_xch": str(total_mojo / 1e12), "total_mojo": str(total_mojo), "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] == 0]},
-            "unspent_coins": unspent_coins_list, # 🎯 Отдаем готовые UTXO на фронтенд
+            "balance": {
+                "total_xch": str(total_mojo / 1e12), 
+                "total_mojo": str(total_mojo), 
+                "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] < 10]
+            },
+            "unspent_coins": unspent_coins_list,
             "transactions": txs[:50]
         }
     except HTTPException as h: raise h

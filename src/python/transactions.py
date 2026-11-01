@@ -6,11 +6,10 @@ from chia.types.blockchain_format.program import Program as PyProgram
 from chia.util.bech32m import decode_puzzle_hash, encode_puzzle_hash
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk, solution_for_conditions, DEFAULT_HIDDEN_PUZZLE_HASH
 from chia.wallet.puzzles.puzzle_utils import make_create_coin_condition
-from shared import get_ssl_credentials, fetch_genesis, get_wallet_pk_unhardened, BASE_RPC_URL
+from shared import get_ssl_credentials, fetch_genesis, BASE_RPC_URL
 
 load_dotenv()
-IS_TESTNET = os.getenv("NEXT_PUBLIC_IS_TESTNET", "false").lower() == "true"
-TESTNET_PREFIX = "txch" if IS_TESTNET else "xch"
+
 API_SECRET = os.getenv("API_SECRET", "DEFAULT_FALLBACK_KEY_DO_NOT_USE_IN_PROD").encode("utf-8")
 tx_router = APIRouter(prefix="/api/v1/transactions", tags=["Transactions Engine"])
 
@@ -31,13 +30,11 @@ async def check_node_synced_internal(client: httpx.AsyncClient):
                     detail="Сеть кошелька временно недоступна: полная нода Chia находится в процессе синхронизации. Попробуйте отправить позже."
                 )
     except httpx.HTTPError:
-        # Если нода лежит или таймаут, мы всё равно не сможем отправить транзу, так что выдаем 503
         raise HTTPException(status_code=503, detail="Служба блокчейна временно недоступна. Проверьте подключение к ноде.")
 
 @tx_router.post("/build-spend-bundle")
 async def build_spend_bundle(
-    master_pk_hex: str = Body(..., embed=True),
-    wallet_index: int = Body(..., embed=True),   
+    coin_pk_hex: str = Body(..., embed=True),   # 🎯 ЗАМЕНА: Принимаем чистый публичный ключ монеты вместо мастер-ключа
     coin_to_spend: dict = Body(..., embed=True), 
     send_to_address: str = Body(..., embed=True),
     mojos_to_send: int = Body(..., embed=True),
@@ -47,8 +44,7 @@ async def build_spend_bundle(
         required = mojos_to_send + fee_mojos
         cert, key = get_ssl_credentials()
         
-        # 🎯 ШЛАГБАУМ НА ВХОДЕ: Идем проверять статус ноды по сети перед сборкой.
-        # Если нода в процессе синхронизации — функция сразу выбросит HTTPException 503 и прервет билд.
+        # 🎯 ШЛАГБАУМ НА ВХОДЕ
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
             await check_node_synced_internal(c)
         
@@ -62,14 +58,13 @@ async def build_spend_bundle(
         if c_amount < required:
             raise HTTPException(status_code=400, detail="Суммы выбранной монеты недостаточно для перевода и комиссии!")
 
-        # 2. БЕЗОПАСНОСТЬ: Проверяем локально, что монета реально деривируется из этого master_pk по этому индексу
-        master_pk = G1Element.from_bytes(bytes.fromhex(master_pk_hex.replace("0x", "")))
-        wallet_pk = get_wallet_pk_unhardened(master_pk, wallet_index)
+        # 2. БЕЗОПАСНОСТЬ: Проверяем локально математическую связь между coin_pk и puzzle_hash
+        wallet_pk = G1Element.from_bytes(bytes.fromhex(coin_pk_hex.replace("0x", "")))
         py_puzzle = puzzle_for_pk(wallet_pk)
         expected_ph_hex = py_puzzle.get_tree_hash().hex()
         
         if c_ph_str.lower() != expected_ph_hex.lower():
-            raise HTTPException(status_code=403, detail="Критическая ошибка: Пузл-хэш монеты не совпадает с ключом индекса!")
+            raise HTTPException(status_code=403, detail="Критическая ошибка: Пузл-хэш монеты не совпадает с предоставленным ключом!")
 
         # 3. Собираем объект Coin
         best_coin = Coin(c_parent, bytes.fromhex(c_ph_str), c_amount)
@@ -95,7 +90,6 @@ async def build_spend_bundle(
         
         return {
             "success": True, 
-            "target_wallet_index": wallet_index, 
             "message_to_sign_hex": msg_hex, 
             "integrity_token": generate_integrity_token(msg_hex, coin_spend_json), 
             "coin_spend": coin_spend_json, 
@@ -105,6 +99,7 @@ async def build_spend_bundle(
         }
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+
 
 @tx_router.post("/send-tx")
 async def send_tx(signature_hex: str = Body(..., embed=True), coin_spend: dict = Body(..., embed=True), integrity_token: str = Body(..., embed=True), message_signed_hex: str = Body(..., embed=True)):

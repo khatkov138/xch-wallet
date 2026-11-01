@@ -1,27 +1,62 @@
+import os
 import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
+
+# Импорт ваших рабочих роутеров
 from wallets import wallet_router
 from transactions import tx_router
+from node import router as node_router
 
 app = FastAPI(title="Chia Custom API Backend", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# Обрабатывает GET-запрос от плашки мониторинга
+# Считываем секретный токен из переменных окружения Питона
+PROXY_SECRET_TOKEN = os.getenv("PROXY_SECRET_TOKEN", "chia_wallet_ultra_secure_token_2026")
+
+# 🎯 MIDDLEWARE ДЛЯ БЛОКИРОВКИ ПРЯМЫХ ЗАПРОСОВ
+@app.middleware("http")
+async def verify_proxy_request(request: Request, call_next):
+    # Разрешаем прямой доступ без токена только для документации (чтобы тестировать в процессе разработки)
+    if request.url.path in ["/docs", "/openapi.json"]:
+        return await_next(request)
+        
+    # Вытаскиваем секретный заголовок, присланный прокси-роутом Next.js
+    incoming_token = request.headers.get("x-proxy-secret")
+    
+    # Если токен не пришел или не совпал — жестко рубим соединение
+        # Если токен не пришел или не совпал — возвращаем сухой стандартный отказ
+    if incoming_token != PROXY_SECRET_TOKEN:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "success": False,
+                "detail": "Forbidden"  # 🎯 Никаких упоминаний Next.js и порта 3000
+            }
+        )
+
+        
+    # Если токен валидный — пропускаем запрос дальше к роутерам
+    return await call_next(request)
+
+
+# Базовый эндпоинт проверки жизнеспособности (теперь защищен)
 @app.get("/api/ping")
-# Обрабатывает HEAD-запрос от wait-on при старте
 @app.head("/api/ping")
 def ping():
     return {"status": "ok"}
 
+
+# Подключаем модули движка кошелька
 app.include_router(wallet_router)
 app.include_router(tx_router)
+app.include_router(node_router)
+
 
 if __name__ == "__main__":
     uvicorn.run(
-        "server:app",
-        host="127.0.0.1",
-        port=8000,
+        "server:app",  # Запуск файла server.py и экземпляра приложения app
+        host="127.0.0.1", # Слушаем только локальный интерфейс (внешняя сеть закрыта)
+        port=8000, # Внутренний порт бэкенда
         reload=True,
-        reload_dirs=["src/python"] # Если server.py лежит в src/python, можно просто "." или ["."]
+        reload_dirs=["src/python"]
     )

@@ -14,12 +14,10 @@ interface WalletHeaderProps {
 export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps) {
   const { hardResetWallet } = useWalletAuth()
   
-  // 🎯 Достаем nodeData из твоего глобального хука статуса ноды
-  const { isPythonDown, isRpcDown, isNotSynced, nodeData } = useWalletStatus()
+  // Достаем актуальные флаги из твоего обновленного хука
+  const { isPythonDown, isRpcDown, isNotSynced, hasError, isLoading, nodeData } = useWalletStatus()
 
   const isDash = variant === "dashboard"
-
-  // 🎯 БОЛЬШЕ НИКАКИХ .ENV! Динамически определяем, тестнет ли это, по данным из RPC
   const networkName = nodeData?.network || "mainnet"
   const isTestnet = networkName.toLowerCase().includes("testnet")
 
@@ -28,16 +26,23 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
     window.location.href = "/auth"
   }
 
-  // Расчет динамического статуса для шапки
+  // 🎯 РАСЧЕТ ДИНАМИЧЕСКОГО СТАТУСА С ЗАЩИТОЙ ОТ ПУСТОЙ ЗАГРУЗКИ
   let statusText = "Online"
   let statusBadgeClass = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15"
   let statusDotClass = "bg-emerald-400"
 
   if (isPythonDown || isRpcDown) {
+    // 1. Критическая ошибка — бэк или нода лежат
     statusText = "Offline"
     statusBadgeClass = "text-[#FF2E93] bg-[#FF2E93]/10 border-[#FF2E93]/20 hover:bg-[#FF2E93]/15"
     statusDotClass = "bg-[#FF2E93]"
+  } else if (isLoading && !nodeData) {
+    // 2. Идет первый запрос в сеть — пишем нейтральный статус, чтобы не врать
+    statusText = "Loading..."
+    statusBadgeClass = "text-zinc-400 bg-zinc-800/40 border-zinc-700/50"
+    statusDotClass = "bg-zinc-500"
   } else if (isNotSynced) {
+    // 3. Нода не синхронизирована
     statusText = "Syncing"
     statusBadgeClass = "text-amber-400 bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15"
     statusDotClass = "bg-amber-500"
@@ -61,7 +66,6 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
               ? "text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20 shadow-sm shadow-[#FF2E93]/5"
               : "text-zinc-400 bg-zinc-900/60 border-zinc-800"
           }`}>
-            {/* ТУТ ТЕПЕРЬ АКТУАЛОЧКА: Выводим либо реальное имя тестнета большими буквами, либо MAINNET */}
             {isTestnet ? networkName.toUpperCase() : "MAINNET"}
           </span>
         ) : (
@@ -75,13 +79,12 @@ export function WalletHeader({ variant, version = "v0.2.0" }: WalletHeaderProps)
       {isDash ? (
         <div className="flex items-center gap-2">
           
-          {/* КЛИКАБЕЛЬНО: Обернули бейдж в Next.js Link */}
           <Link
             href="/status"
             className={`text-[10px] font-bold border px-2.5 py-0.5 rounded-full flex items-center gap-1.5 transition-all duration-200 cursor-pointer active:scale-95 ${statusBadgeClass}`}
             title="Open network status node monitor"
           >
-            <span className={`h-1.5 w-1.5 rounded-full animate-pulse ${statusDotClass}`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${statusText !== "Loading..." ? "animate-pulse" : ""} ${statusDotClass}`} />
             {statusText}
           </Link>
 
