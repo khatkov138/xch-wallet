@@ -155,7 +155,6 @@ export function useSendTransaction({
 
   const sendTxMutation = useMutation({
     mutationFn: async () => {
-      // КРИТИЧЕСКИЙ ЧЕК: Теперь проверяем наличие самого массива спендов, ПИН-кода и снапшота
       if (!preparedSpendData?.coin_spends || !pin || !localSnapshot) {
         throw new Error("Критическая ошибка: отсутствуют данные спендов или локальный снапшот!")
       }
@@ -165,9 +164,7 @@ export function useSendTransaction({
       console.log("🔍 [🔍 ШАГ 2] ЗАПУЩЕН МУЛЬТИ-ВХОДНОЙ КРИПТО-АУДИТ (НОВАЯ СТРУКТУРА)...")
       console.log("========================================================")
 
-      // Достаем массив спендов из нового ответа Шага 1
       const coinSpendsList = preparedSpendData.coin_spends
-
       if (!coinSpendsList || coinSpendsList.length === 0) {
         throw new Error("Критическая ошибка: Список спендов от бэкенда пуст!")
       }
@@ -197,21 +194,32 @@ export function useSendTransaction({
           throw new Error(`Критическая ошибка: Обнаружено несоответствие Coin ID на монете #${i}!`)
         }
       }
-      console.log("💪 Математический аудит всех инпутов пройден успешно!")
+      console.log("💪 Математический audit всех инпутов пройден успешно!")
 
-      // 🛡️ 2. АУДИТ ЧЕРЕЗ СНАПШОТ: Сверяем данные с локальным стейтом
+      // 🛡️ 2. АУДИТ ЧЕРЕЗ СНАПШОТ И ЗАЩИТА 90%
       console.log("\n📸 Проверяем соответствие данных с локальным снапшотом...")
       if (preparedSpendData.verified_target_address !== localSnapshot.targetAddress) {
         console.error("❌ ПОДМЕНА АДРЕСА: Бэк вернул левый адрес!", preparedSpendData.verified_target_address)
         throw new Error("Критическая ошибка: Конечный адрес получателя изменен бэкендом или перехвачен!")
       }
 
-      if (preparedSpendData.verified_mojos_to_send !== localSnapshot.mojosToSend) {
-        console.error("❌ ПОДМЕНА СУММЫ: Бэк изменил сумму!", preparedSpendData.verified_mojos_to_send)
-        throw new Error("Критическая ошибка: Конечная сумма транзакции изменена бэкендом или перехвачен!")
-      }
-      console.log("💪 Снапшот-аудит пройден успешно! Данные чисты.")
+      const backendTargetMojo = preparedSpendData.verified_mojos_to_send
+      const backendNetworkFee = preparedSpendData.audit_info?.summary.fee_network_mojo || 0
+      const backendDustFee = preparedSpendData.audit_info?.disposition.dust_fee?.amount_mojo || 0
+      const totalBackendOutflow = backendTargetMojo + backendNetworkFee + backendDustFee
 
+      if (totalBackendOutflow !== localSnapshot.mojosToSend) {
+        console.error("❌ ПОДМЕНА СУММЫ: Итоговый расход не бьется со снапшотом!", totalBackendOutflow, localSnapshot.mojosToSend)
+        throw new Error("Критическая ошибка: Итоговая сумма списания изменена бэкендом или перехвачена!")
+      }
+
+      // 🎯 ЗАЩИТА СЛИППИДЖА (90%): Получатель должен получить не менее 90% от исходного инпута
+      const minimumAllowedMojo = localSnapshot.mojosToSend * 0.9
+      if (backendTargetMojo < minimumAllowedMojo) {
+        console.error(`❌ АТАКА НА КОМИССИИ: Получателю долетает слишком мало! Назначено: ${backendTargetMojo}, Минимум: ${minimumAllowedMojo}`)
+        throw new Error("Критическая ошибка: Суммарные комиссии превысили порог в 10% от суммы отправки!")
+      }
+      console.log("💪 Снапшот-аудит и защита от проскальзывания пройдены успешно!")
       // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ С АБСОЛЮТНОЙ СИНХРОНИЗАЦИЕЙ ИНДЕКСОВ CHIA
       setStatusMessage("🔐 Подписание транзакции...")
       const clearMnemonic = await getMnemonicForSigning(pin)
@@ -219,7 +227,6 @@ export function useSendTransaction({
       console.log("\n🔑 [КРИПТОГРАФИЯ: ПОСЛЕДОВАТЕЛЬНЫЙ МУЛЬТИ-ПОДПИСНЫЙ ЦИКЛ С ИЗОЛЯЦИЕЙ MEMORY]")
       const signatures: string[] = []
 
-      // Строгий последовательный цикл подписи
       for (let idx = 0; idx < coinSpendsList.length; idx++) {
         const item = coinSpendsList[idx]
         const currentWalletIndex = item.wallet_index
@@ -229,7 +236,6 @@ export function useSendTransaction({
           throw new Error(`Критическая ошибка структуры: отсутствует индекс деривации внутри спенда #${idx}!`)
         }
 
-        // Логируем ДО ухода в асинхронный контекст
         console.log(`\n 📦 [ОЧЕРЕДЬ idx:${idx}] Подготовка таски. Истинный индекс деривации: ${currentWalletIndex}`);
         console.log(`   • Сообщение (первые 16 симв.): ${msgHex.substring(0, 16)}...`);
 
@@ -237,16 +243,12 @@ export function useSendTransaction({
           Promise.resolve().then(() => {
             try {
               console.log(`   ⚡ [EXECUTION idx:${idx}] Вызывается signChiaTransaction!`);
-              console.log(`     -> Передаем walletIndex в функцию: ${Number(currentWalletIndex)} (тип: ${typeof Number(currentWalletIndex)})`);
-
-              // 🔥 НОВАЯ СХЕМА: Передаем syntheticOffsetHex вместо hiddenPuzzleHashHex индивидуально для каждого инпута
               const resultSig = signChiaTransaction({
                 mnemonic: clearMnemonic,
                 walletIndex: Number(currentWalletIndex),
                 messageHex: msgHex,
                 syntheticOffsetHex: item.synthetic_offset_hex,
               });
-
               console.log(`     ✅ Подпись сгенерирована: ${resultSig.substring(0, 32)}...`);
               resolve(resultSig);
             } catch (err) {
@@ -255,22 +257,13 @@ export function useSendTransaction({
             }
           });
         });
-
         signatures.push(sig);
       }
-
       console.log("💪 Все подписи успешно собраны в строгом порядке!")
-
-      // ========================================================================
-      // 🔬 ЗЕРКАЛЬНЫЙ КРИПТО-ДЕБАГ (ДЛЯ СРАВНЕНИЯ С ЛОГАМИ БЭКЕНДА)
-      // ========================================================================
-      console.log("\n==============================================================")
-      console.log("🔬 [РАСШИРЕННЫЙ КРИПТО-ДЕБАГ] ДАННЫЕ СТОРОНЫ ФРОНТЕНДА")
-      console.log("==============================================================")
 
       const cleanCoinSpends = coinSpendsList.map((cs: any) => ({
         wallet_index: cs.wallet_index,
-        synthetic_offset_hex: cs.synthetic_offset_hex, // 🔥 ДОБАВЛЯЕМ СЮДА ПРОБРОС ОФФСЕТА!
+        synthetic_offset_hex: cs.synthetic_offset_hex,
         coin: {
           parent_coin_info: cs.coin.parent_coin_info,
           puzzle_hash: cs.coin.puzzle_hash,
@@ -281,16 +274,6 @@ export function useSendTransaction({
       }))
 
       const flatMessagesList = coinSpendsList.map((cs: any) => cs.message_to_sign_hex)
-
-      for (let i = 0; i < coinSpendsList.length; i++) {
-        const frontMsgHex = flatMessagesList[i].replace("0x", "").toLowerCase().trim()
-        const frontSigHex = signatures[i].replace("0x", "").toLowerCase().trim()
-
-        console.log(`\n👉 МОНЕТА [${i}] | Индекс во фронте: ${coinSpendsList[i].wallet_index}`)
-        console.log(`   • Message для подписи:      ${frontMsgHex}`)
-        console.log(`   • Подпись от ФРОНТЕНДА:     ${frontSigHex.substring(0, 64)}...`)
-      }
-
       const payloadToSend = {
         signatures_list: signatures,
         coin_spends: cleanCoinSpends,
@@ -298,12 +281,8 @@ export function useSendTransaction({
         messages_signed_hex: flatMessagesList
       }
 
-      console.log("\n📤 ПОЛНЫЙ JSON СФОРМИРОВАН И ПРОВЕРЕН.");
-      console.log("==============================================================")
-
       setStatusMessage("🚀 Отправка пакета трат в сеть...")
 
-      // Пушим агрегированный массив на бэкенд
       const res = await fetch("/api/v1/transactions/send-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -314,9 +293,8 @@ export function useSendTransaction({
       console.log("📥 [КОНСОЛЬ-ЛОГ] Финальный ответ бэка на Шаге 2:", result)
 
       if (!res.ok || !result.success) {
-        throw new Error(result.error || result.detail || "Нода отклонила трантранзакцию")
+        throw new Error(result.error || result.detail || "Нода отклонила транзакцию")
       }
-
       return result
     },
     onSuccess: (resData) => {
@@ -330,14 +308,9 @@ export function useSendTransaction({
       const nextAttempts = pinAttempts + 1
       setPinAttempts(nextAttempts)
       setPin("")
-
-      if (nextAttempts >= 3) {
-        onClose()
-      } else {
-        setStatusMessage(`❌ Ошибка крипто-аудита или подписи! Осталось попыток: ${3 - nextAttempts}\n${err.message || err}`)
-      }
     }
   })
+
 
 
 

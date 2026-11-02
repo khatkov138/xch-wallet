@@ -31,20 +31,19 @@ async def build_spend_bundle(
     inputs: list[dict] = Body(..., description="Массив объектов {coin_pk_hex, coin_to_spend, wallet_index}"),
     send_to_address: str = Body(..., embed=True),
     mojos_to_send: int = Body(..., embed=True),
-    fee_mojos: int = Body(0, embed=True)
+    fee_mojos: int = Body(0, embed=True),
+    # 🎯 ЖЕЛЕЗНЫЙ ФЛАГ SEND MAX: Сеттим по умолчанию в True, если хочешь сквозное вычитание комиссий из инпута
+    subtract_fee_from_amount: bool = Body(True, embed=True)
 ):
     try:
         if not inputs:
             raise HTTPException(status_code=400, detail="Список монет пуст!")
             
-        required = mojos_to_send + fee_mojos
         cert, key = get_ssl_credentials()
-        
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
             await check_node_synced_internal(c)
         
         genesis = fetch_genesis(cert, key)
-
         total_input_amount = 0
         parsed_coins = []
         
@@ -55,11 +54,9 @@ async def build_spend_bundle(
             amt = int(c_src["amount"])
             
             if "wallet_index" not in item or item["wallet_index"] is None:
-                raise HTTPException(status_code=400, detail="Критическая ошибка: Фронтенд не передал wallet_index для одной из монет!")
+                raise HTTPException(status_code=400, detail="Критическая ошибка: Фронтенд не передал wallet_index!")
             
             total_input_amount += amt
-            
-            # 🎯 ЧИСТЫЙ ПАРСИНГ
             py_puzzle = puzzle_for_pk(G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))))
             
             if p_hash.hex().lower() != py_puzzle.get_tree_hash().hex().lower():
@@ -71,19 +68,38 @@ async def build_spend_bundle(
                 "coin_pk_hex": item["coin_pk_hex"], 
                 "wallet_index": int(item["wallet_index"])
             })
-            
+        PROJECT_DUST_ADDRESS = "txch12dza3pwr4gzyfxgvl04tlu67nlhw5yv86sx3snkqr0tck2ss4uns4fqh9w"
+        DUST_FEE_MOJOS = 100_000_000  # 0.0001 XCH Комиссия билдера
+
+        # 🎯 ЖЕСТКИЙ ФИКС МАТЕМАТИКИ: Пересчитываем mojos_to_send ДО формирования условий траты
+        if subtract_fee_from_amount:
+            mojos_to_send = mojos_to_send - fee_mojos - DUST_FEE_MOJOS
+            if mojos_to_send <= 0:
+                raise HTTPException(status_code=400, detail="Сумма перевода слишком мала для покрытия комиссий!")
+            required = mojos_to_send + fee_mojos + DUST_FEE_MOJOS
+        else:
+            required = mojos_to_send + fee_mojos
+
         if total_input_amount < required:
-            raise HTTPException(status_code=400, detail="Недостаточно выбранных монет!")
+            raise HTTPException(status_code=400, detail="Недостаточно выбранных монет на балансе!")
             
         lead_puzzle = parsed_coins[0]["py_puzzle"]
         lead_coin = parsed_coins[0]["coin_obj"]
         
+        # 1. Основное условие: Отправка (сумма mojos_to_send УЖЕ скорректирована внутри лимита)
         lead_conds = [make_create_coin_condition(decode_puzzle_hash(send_to_address), mojos_to_send, [])]
         
         change_amount = total_input_amount - required
+        fee_collected = DUST_FEE_MOJOS
+
+        # 2. 🔌 ЖЕЛЕЗНАЯ ПРИСОСКА КОМИССИИ КОШЕЛЬКА
+        lead_conds.append(make_create_coin_condition(decode_puzzle_hash(PROJECT_DUST_ADDRESS), DUST_FEE_MOJOS, []))
+
+        # 3. Возврат остатка сдачи пользователю на ведущий адрес
         if change_amount > 0:
             lead_conds.append(make_create_coin_condition(lead_puzzle.get_tree_hash(), change_amount, []))
             
+        # 4. Сбор доноров через анонсы
         if len(parsed_coins) > 1:
             for idx in range(1, len(parsed_coins)):
                 donor_coin = parsed_coins[idx]["coin_obj"]
@@ -115,8 +131,7 @@ async def build_spend_bundle(
                 G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))), 
                 DEFAULT_HIDDEN_PUZZLE_HASH
             )
-            offset_bytes = offset_int.to_bytes(32, byteorder="big")
-            synthetic_offset_hex = offset_bytes.hex()
+            synthetic_offset_hex = offset_int.to_bytes(32, byteorder="big").hex()
 
             coin_spends_json_list.append({
                 "wallet_index": current_wallet_index, 
@@ -133,35 +148,28 @@ async def build_spend_bundle(
 
         final_integrity_token = generate_multi_integrity_token(messages_to_sign, coin_spends_json_list)
 
-        print("\n==============================================================")
-        print("📤 [ПРОДАКШН БИЛДЕР] ОТПРАВЛЯЕМ НЕКОСТОДИАЛЬНЫЕ ДАННЫЕ НА ФРОНТ")
-        print("==============================================================")
-        print(f"• Подготовлено спендов монет (coin_spends): {len(coin_spends_json_list)}")
-        print("==============================================================\n")
-            
-        # 🎯 СОБИРАЕМ АУДИТОРСКУЮ ИНФОРМАЦИЮ БЕЗ ИЗМЕНЕНИЯ ОРИГИНАЛЬНОЙ ТРАНЗАКЦИИ
         audit_info = {
             "summary": {
                 "total_inputs_mojo": total_input_amount,
                 "total_outputs_mojo": total_input_amount,
                 "fee_network_mojo": fee_mojos,
-                "is_dust_split_applied": False  # В текущем базовом билдере сплит выключен
+                "is_dust_fee_collected": True,
+                "is_dust_split_applied": False
             },
             "disposition": {
                 "target": {
                     "address": send_to_address,
                     "puzzle_hash": "0x" + decode_puzzle_hash(send_to_address).hex(),
-                    "amount_mojo": mojos_to_send
+                    "amount_mojo": mojos_to_send  # Фронт увидит честную вычтенную блокчейн-сумму
                 },
                 "standard_change": {
                     "wallet_index": parsed_coins[0]["wallet_index"],
                     "puzzle_hash": "0x" + lead_puzzle.get_tree_hash().hex(),
                     "amount_mojo": change_amount
                 },
-                "dust_split": {
-                    "amount_per_address_mojo": 0,
-                    "total_addresses_funded": 0,
-                    "funded_indexes": []
+                "dust_fee": {
+                    "puzzle_hash": "0x" + decode_puzzle_hash(PROJECT_DUST_ADDRESS).hex(),
+                    "amount_mojo": fee_collected
                 }
             }
         }
@@ -172,7 +180,6 @@ async def build_spend_bundle(
             "coin_spends": coin_spends_json_list, 
             "verified_target_address": send_to_address, 
             "verified_mojos_to_send": mojos_to_send,
-            # 🎯 НОВОЕ ДОПОЛНИТЕЛЬНОЕ ПОЛЕ
             "audit_info": audit_info
         }
     except HTTPException as h: raise h

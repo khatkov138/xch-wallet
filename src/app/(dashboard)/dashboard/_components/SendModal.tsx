@@ -9,7 +9,7 @@ import { UtxoCard } from "./UtxoCard"
 import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
 
 interface SendModalProps { isOpen: boolean; onClose: () => void }
-const SERVICE_FEE_MOJO = 100000000, SERVICE_FEE_XCH_STR = "0.0001 XCH"
+const SERVICE_FEE_XCH_STR = "0.0001 XCH"
 
 export function SendModal({ isOpen, onClose }: SendModalProps) {
   const [targetAddress, setTargetAddress] = useState(""), [amount, setAmount] = useState("")
@@ -21,31 +21,32 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
 
   useEffect(() => { if (!isOpen) { setTargetAddress(""); setAmount(""); setCustomFeeMojo("500000000"); resetHooksState() } }, [isOpen])
 
-  // 🎯 ФИКС: Вызываем хук строго ДО раннего возврата, на самом верхнем уровне компонента!
+  // 🎯 ЖЕЛЕЗНЫЙ ФИКС ПОРЯДКА ХУКОВ: Все вызовы идут строго до раннего возврата if (!isOpen)
   const audit = preparedSpendData?.audit_info
   const changeAddress = usePuzzleHashToAddress(audit?.disposition.standard_change.puzzle_hash)
   const shortChangeAddr = changeAddress ? `${changeAddress.slice(0, 7)}...${changeAddress.slice(-6)}` : "..."
 
-  // Строка проверки isOpen должна идти ниже всех хуков
+  const dustFeeAddress = usePuzzleHashToAddress(audit?.disposition.dust_fee.puzzle_hash)
+  const shortDustFeeAddr = dustFeeAddress ? `${dustFeeAddress.slice(0, 7)}...${dustFeeAddress.slice(-6)}` : "..."
+
   if (!isOpen) return null
 
   const getFeeInXchString = () => {
     const mojo = parseFloat(customFeeMojo) || 0
     return mojo === 0 ? "0 XCH" : `${(mojo / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`
   }
+  
   const getTotalOutflowString = () => {
     const sendAmt = parseFloat(amount) || 0
-    const networkFeeXch = (parseFloat(customFeeMojo) || 0) / 1e12
-    const serviceFeeXch = SERVICE_FEE_MOJO / 1e12
-    return `${(sendAmt + networkFeeXch + serviceFeeXch).toFixed(12).replace(/\.?0+$/, "")} XCH`
+    return `${sendAmt.toFixed(4)} XCH`
   }
-
-
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      {/* 🎯 РОДИТЕЛЬСКИЙ ФИКС: items-start не дает правой панели распирать модалку вниз */}
       <div className="relative w-full max-w-3xl bg-zinc-900 border border-zinc-800 rounded-2xl text-white shadow-2xl flex flex-col md:flex-row items-start p-6 gap-6 max-h-[95vh] overflow-hidden">
         <button type="button" onClick={onClose} className="absolute top-4 right-4 text-zinc-400 hover:text-white cursor-pointer transition-colors z-10"><X size={18} /></button>
+        
+        {/* ЛЕВАЯ КОЛОНКА (ГЛАВНАЯ) */}
         <div className="w-full md:w-1/2 shrink-0">
           <h3 className="text-lg font-bold mb-4 tracking-tight">Отправить XCH</h3>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -63,32 +64,45 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
             {step === 2 && (
               <>
                 <div className="bg-zinc-950 border border-zinc-850 p-4 rounded-xl space-y-3 text-sm max-h-[42vh] overflow-y-auto scrollbar-thin">
-                  <div className="flex items-start gap-2 text-amber-400 bg-amber-500/10 p-2.5 rounded-lg text-xs border border-amber-500/20"><AlertCircle size={14} className="shrink-0 mt-0.5" /><span>Пожалуйста, внимательно проверьте данные. После ввода ПИН-кода монеты будут отправлены в сеть.</span></div>
+                  <div className="flex items-start gap-2 text-amber-400 bg-amber-500/10 p-2.5 rounded-lg text-xs border border-amber-500/20"><AlertCircle size={14} className="shrink-0 mt-0.5" /><span>Пожалуйста, внимательно проверьте данные транзакции перед вводом ПИН-кода.</span></div>
                   <div className="border-t border-zinc-900 pt-2 space-y-2 text-xs">
-                    <div className="flex justify-between items-center"><span>Сумма перевода:</span><span className="font-bold text-zinc-200">{amount} XCH</span></div>
-                    <div className="flex justify-between items-center"><span>Сетевая комиссия (майнерам):</span><span className="font-mono text-zinc-400">{getFeeInXchString()}</span></div>
-                    <div className="flex justify-between items-center"><span>Комиссия кошелька XCHA:</span><span className="font-mono text-emerald-400 font-bold">{SERVICE_FEE_XCH_STR}</span></div>
+                    
+                    {/* 1. СУММА К СПИСАНИЮ */}
+                    <div className="flex justify-between items-center"><span className="text-zinc-400 font-bold">Всего к списанию:</span><span className="font-black text-white text-sm bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">{getTotalOutflowString()}</span></div>
+                    
+                    {/* ЦЕПОЧКА АУДИТА */}
+                                       {/* ЦЕПОЧКА АУДИТА */}
+                                      {/* ЦЕПОЧКА АУДИТА */}
                     {audit && (
                       <>
-                        <div className="flex justify-between items-center border-t border-zinc-900 pt-2 text-[11px] text-zinc-400">
-                          <span>Сдача (Индекс {audit.disposition.standard_change.wallet_index}):</span>
-                          <span className="font-mono text-zinc-300 truncate max-w-[140px]" title={changeAddress || ""}>{shortChangeAddr}</span>
+                        {/* 2. БУДЕТ ОТПРАВЛЕНО */}
+                        <div className="flex justify-between items-center border-t border-zinc-900 pt-2">
+                          <span>Будет отправлено получателю:</span>
+                          <span className="font-bold text-emerald-400 font-mono">
+                            {`${(Number(audit.disposition.target.amount_mojo) / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`}
+                          </span>
                         </div>
-                        {/* 🎯 РАСЧЕТ ИСПРАВЛЕН: Считаем нативно на месте через 1e12 без вызова toXCH */}
-                        <div className="flex justify-between items-center text-[11px] text-zinc-400">
-                          <span>Сумма сдачи:</span>
-                          <span className="font-mono text-zinc-300 font-semibold">{`${(audit.disposition.standard_change.amount_mojo / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`}</span>
+                        
+                        {/* 3. СЕТЕВАЯ КОМИССИЯ (🎯 ТЕПЕРЬ С МИНУСОМ) */}
+                        <div className="flex justify-between items-center text-zinc-500">
+                          <span>Сетевая комиссия (майнерам):</span>
+                          <span className="font-mono text-zinc-400">{`- ${getFeeInXchString()}`}</span>
                         </div>
-
-                        {audit.summary.is_dust_split_applied && (
-                          <div className="bg-[#FF2E93]/5 border border-[#FF2E93]/20 p-2 rounded-lg text-[11px] space-y-0.5 mt-1">
-                            <div className="flex justify-between text-[#FF2E93] font-bold"><span>Пылевой сплит:</span><span>Активен</span></div>
-                            <div className="flex justify-between text-zinc-400"><span>Адресов / На каждый:</span><span className="text-zinc-200 font-mono">{audit.disposition.dust_split.total_addresses_funded} / {`${(audit.disposition.dust_split.amount_per_address_mojo / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`}</span></div>
+                        
+                        {/* 4. ПЫЛЕВАЯ КОМИССИЯ (🎯 ТОЖЕ С МИНУСОМ И СЕРАЯ) */}
+                        {audit.summary.is_dust_fee_collected && (
+                          <div className="flex justify-between items-center text-zinc-500">
+                            <span>Пылевая комиссия кошелька:</span>
+                            <span className="font-mono text-zinc-400">
+                              {`- ${(Number(audit.disposition.dust_fee.amount_mojo) / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`}
+                            </span>
                           </div>
                         )}
                       </>
                     )}
-                    <div className="flex justify-between items-center pt-2 border-t border-zinc-900"><span className="text-zinc-400 font-bold">Всего к списанию:</span><span className="font-black text-white text-sm bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">{getTotalOutflowString()}</span></div>
+
+
+
                     <div className="flex flex-col gap-1 pt-2 border-t border-zinc-900 text-xs"><span>Адрес получателя:</span><div className="relative w-full bg-zinc-900/50 p-4 pt-6 rounded-xl border border-zinc-850 flex items-center justify-center text-center select-none min-h-[72px]">{renderHighlightedAddress(targetAddress)}</div></div>
                   </div>
                 </div>
@@ -107,6 +121,8 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
             )}
           </form>
         </div>
+
+        {/* ПРАВАЯ КОЛОНКА */}
         <div className="w-full md:w-1/2 flex flex-col self-stretch">
           <div className="pb-2"><h4 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">🪙 UTXO Карта (Локальные адреса)</h4></div>
           <div className="flex-1 overflow-y-auto pr-1 space-y-3 max-h-[380px] scrollbar-thin scrollbar-thumb-zinc-800/80 scrollbar-track-transparent">

@@ -8,6 +8,7 @@ from wallets import wallet_router
 from node import router as node_router
 from transactions_build import tx_router as tx_build_router
 from transactions_send import tx_router as tx_send_router
+from transactions_track import transactions_track_router
 
 app = FastAPI(title="Chia Custom API Backend", version="1.0.0")
 
@@ -52,8 +53,7 @@ app.include_router(node_router)
 # 🎯 Подключаем новые роутеры транзакций (они заменяют старый transactions.py)
 app.include_router(tx_build_router)
 app.include_router(tx_send_router)
-
-
+app.include_router(transactions_track_router)
 if __name__ == "__main__":
     uvicorn.run(
         "server:app",  # Запуск файла server.py и экземпляра приложения app
