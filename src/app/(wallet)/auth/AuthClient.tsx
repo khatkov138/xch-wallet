@@ -5,9 +5,10 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { KeyRound, PlusCircle } from "lucide-react"
 
 import { GeneratePhraseForm } from "./_components/GeneratePhraseForm"
-import { ImportPhraseForm } from "./_components/ImportPhraseForm"
+
 import { CreateWalletForm } from "./_components/CreateWalletForm"
 import { Card, CardContent } from "@/components/ui/card"
+import { ImportPhraseForm } from "./_components/import-wallet/ImportPhraseForm"
 
 function AuthTabsContainer({ onSubmit }: { onSubmit: (phrase: string) => void }) {
   const router = useRouter()

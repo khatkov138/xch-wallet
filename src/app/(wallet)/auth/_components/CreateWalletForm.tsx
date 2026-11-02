@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from "react"
+import React, { useState, useEffect, startTransition } from "react"
 import { useRouter } from "next/navigation"
 
 import { PinCodeLayout } from "@/components/PinCodeLayout"
@@ -25,6 +25,12 @@ export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
   const [isError, setIsError] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
   const [subtitle, setSubtitle] = useState("Для защиты ключей и подтверждения операций")
+
+  // 🛡️ ФИКС ГИДРАТАЦИИ/АВТОКОМПЛИТА: Предзагружаем дашборд, чтобы роутер Next.js 
+  // не вызывал долгий ленивый use() внутри асинхронного события.
+  useEffect(() => {
+    router.prefetch("/dashboard")
+  }, [router])
 
   const handlePinComplete = async (pin: string, clearPin: () => void) => {
     setIsLocked(true)
@@ -59,12 +65,14 @@ export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
           // 3. Поднимаем сессию в оперативной памяти (Строго RAM через Zustand, без утечек в Storage)
           await loginWithClearMnemonic(cleanPhrase)
 
-          // 4. Жесткий атомарный переход без лишних триггеров стейта родителя
-          router.push("/dashboard")
+          // 4. 👍 ЖЕСТКИЙ ФИКС: Оборачиваем атомарный переход в startTransition
+          // Это изолирует планирование рендеринга новой страницы от текущего стейта формы
+          startTransition(() => {
+            router.replace("/dashboard")
+          })
         } catch (err: any) {
           console.error("❌ Криптографическая ошибка при шифровании фразы:", err)
           
-          // Выводим ошибку в бруталистичный сабтайтл, окрашенный в розовый неон через PinCodeLayout
           setIsError(true)
           setSubtitle(err.message || "Критическая ошибка шифрования ключей")
 

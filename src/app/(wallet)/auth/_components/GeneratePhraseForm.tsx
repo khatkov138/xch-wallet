@@ -19,7 +19,7 @@ export function GeneratePhraseForm({ onSubmit }: GeneratePhraseFormProps) {
     try {
       setPhrase(bip39.generateMnemonic(256))
     } catch (e) {
-      setPhrase("Ошибка初始化 bip39.")
+      setPhrase("Ошибка bip39.")
     }
   }, [])
 
@@ -168,7 +168,7 @@ const ActionBlock = memo(({
             : 'bg-zinc-800 text-zinc-600 cursor-not-allowed shadow-none'
         }`}
       >
-        <span>Продолжить к защите</span>
+        <span>Создать кошелек</span>
         <ArrowRight size={16} className={isAgreed && !disabled ? "text-[#FF2E93]" : "text-zinc-600"} />
       </Button>
     </div>

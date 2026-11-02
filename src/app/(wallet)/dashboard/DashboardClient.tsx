@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from "react"
+import React, { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 
 import { ActionButtons } from "./_components/ActionButtons"
@@ -13,7 +13,6 @@ import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
 import { UnlockPinForm } from "./UnlockPinForm"
 import { useIdleTimer } from "@/hooks/useIdleTimer"
-import { useWalletDashboard } from "@/hooks/useWalletDashboard"
 import { BackupCard } from "./_components/BackupCard"
 import WalletGlobalLoading from "../loading"
 
@@ -21,6 +20,9 @@ export default function DashboardClient() {
   const router = useRouter()
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
   const [isSendOpen, setIsSendOpen] = useState(false)
+  
+  // Локальный охранный стейт, чтобы предотвратить вспышки и дергания контента (CLS = 0)
+  const [authChecked, setAuthChecked] = useState(false)
 
   const { checkInitialState } = useWalletAuth()
 
@@ -34,22 +36,24 @@ export default function DashboardClient() {
 
   const isHydrated = sessionHydrated && secureHydrated
 
-  // Тяжелые фоновые хуки
+  // Тяжелые фоновые хуки простоя экрана
   useIdleTimer()
- 
 
-  // 🛡️ 1. ЕДИНЫЙ ЖЕЛЕЗНЫЙ ЭФФЕКТ: Проверяем состояние кошелька сразу после гидратации RAM
+  // 🛡️ ЕДИНЫЙ БЕЗОПАСНЫЙ ЭФФЕКТ: Проверяем ключи в RAM строго ПОСЛЕ монтирования, а не в рендере
   useEffect(() => {
     if (!isHydrated || isVerifying) return
 
-    if (checkInitialState() === "NO_WALLET") {
-      router.push("/auth")
+    const walletState = checkInitialState()
+    if (walletState === "NO_WALLET") {
+      router.replace("/auth")
+    } else {
+      setAuthChecked(true)
     }
   }, [isHydrated, isVerifying, checkInitialState, router])
 
-  // 🛡️ 2. ИНТЕРВАЛ БЕЗОПАСНОСТИ: Регулярный чек валидности ключей в RAM
+  // Регулярный интервал проверки валидности сессии
   useEffect(() => {
-    if (isScreenLocked || !isHydrated || isVerifying) return
+    if (isScreenLocked || !isHydrated || isVerifying || !authChecked) return
     
     const interval = setInterval(() => { 
       if (checkInitialState() === "NO_WALLET") {
@@ -58,16 +62,16 @@ export default function DashboardClient() {
     }, 5000)
     
     return () => clearInterval(interval)
-  }, [isScreenLocked, isHydrated, isVerifying, checkInitialState, router])
+  }, [isScreenLocked, isHydrated, isVerifying, authChecked, checkInitialState, router])
 
-  // 🛡️ 3. ЧИСТОЕ ВЫЧИСЛЕНИЕ ЗАГРУЗКИ: Без локальных стейтов и лишних тиков
-  const isLoading = !isHydrated || isVerifying
+  // 🛡️ Жесткий расчет загрузки: Пока идет проверка или гидратация — контент ЗАБЛОКИРОВАН
+  const isLoading = !isHydrated || isVerifying || !authChecked
 
   if (isLoading) {
     return <WalletGlobalLoading />
   }
 
-  // Экран блокировки сессии
+  // Экран блокировки сессии (встает вместо контента)
   if (isScreenLocked) {
     return (
       <div className="w-full py-12 animate-in fade-in duration-200">
@@ -76,7 +80,7 @@ export default function DashboardClient() {
     )
   }
 
-  // Основной контент дашборда кошелька
+  // Основной контент дашборда кошелька (твоя оригинальная верстка без изменений)
   return (
     <>
       <div className="w-full space-y-6 animate-in fade-in duration-300">
