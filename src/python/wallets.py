@@ -21,11 +21,11 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
         
         ph_map[ph_hex] = {"index": i}
         
-        # 🎯 ОПТИМИЗАЦИЯ: Добавляем поле address_pubkey_hex строго ОДИН РАЗ на весь адрес!
+        # Добавляем поле address_pubkey_hex строго ОДИН РАЗ на весь адрес!
         addrs.append({
             "index": i, 
             "puzzle_hash": f"0x{ph_hex}", 
-            "address_pubkey_hex": pubkey_hex_string, # 🔥 Ключ теперь живет здесь
+            "address_pubkey_hex": pubkey_hex_string, 
             "xch": "0.0", 
             "mojo": 0, 
             "coins_count": 0
@@ -84,8 +84,7 @@ async def get_wallet_dashboard(
                 try: idxs = [int(i.strip()) for i in active_indexes.split(",") if i.strip().isdigit() and int(i) < MAX_LIM]
                 except: idxs = []
                 
-                # 🎯 ИСПРАВЛЕНИЕ БАГА СЛЕПОТЫ: Включаем первые 10 индексов в принудительный пул для опроса ноды.
-                # Теперь, если монета упадет на индекс 1-9, кошелек мгновенно зафиксирует её в light режиме.
+                # Принудительный базовый пул 0-9 для мгновенного отслеживания UTXO в light режиме
                 base_pool = list(range(0, 10))
                 max_a = max(idxs, default=0)
                 idxs = list(set(base_pool + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
@@ -116,8 +115,6 @@ async def get_wallet_dashboard(
                     addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
                     addr_lookups[ph_clean]["coins_count"] += 1
                 
-                # 🎯 ОПТИМИЗАЦИЯ: Поле coin_pubkey_hex ПОЛНОСТЬЮ УБРАНО из монет!
-                # JSON стал весить в разы меньше
                 unspent_coins_list.append({
                     "wallet_index": idx,
                     "coin": {
@@ -146,12 +143,18 @@ async def get_wallet_dashboard(
                     "puzzle_hash": f"0x{ph_clean}", 
                     "timestamp": ts
                 }
+                
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)
+        
+        # 🎯 СОРТИРОВКА КОИНОВ: строго по возрастанию wallet_index, 
+        # а внутри одного индекса — по убыванию баланса монеты (крупные UTXO первыми)
+        sorted_unspent_coins = sorted(
+            unspent_coins_list, 
+            key=lambda x: (x["wallet_index"], -int(x["coin"]["amount"]))
+        )
+        
         print(f"🏁 [DASHBOARD SUCCESS] Всего опрошено адресов: {total_scanned} | Живых индексов: {sorted(list(active_bal))}\n")
         
-        # 🎯 КОРРЕКТИРОВКА ФИЛЬТРАЦИИ НА ВЫХОДЕ:
-        # В режиме light отдаем только адреса с монетами, но ПРИНУДИТЕЛЬНО оставляем весь базовый пул (0-9).
-        # Это гарантирует, что UI SendModal отобразит карточки начальных индексов для мониторинга UTXO.
         return {
             "meta": {"mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
             "balance": {
@@ -159,7 +162,7 @@ async def get_wallet_dashboard(
                 "total_mojo": str(total_mojo), 
                 "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] < 10]
             },
-            "unspent_coins": unspent_coins_list,
+            "unspent_coins": sorted_unspent_coins,
             "transactions": txs[:50]
         }
     except HTTPException as h: raise h

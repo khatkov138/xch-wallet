@@ -51,8 +51,8 @@ export function useSendTransaction({
   }
 
   // --- МУТАЦИЯ ШАГА 1: Запрос на сборку транзакции ---
- 
- const buildBundleMutation = useMutation({
+
+  const buildBundleMutation = useMutation({
     mutationFn: async () => {
       if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
 
@@ -112,6 +112,13 @@ export function useSendTransaction({
       }
       setLocalSnapshot(snapshot)
 
+      console.log("========= 🟩 ФРОНТЕНД: ПОРЯДКОВЫЙ ПУЛ МОНЕТ (ОТПРАВКА НА БИЛД) =========");
+      inputs.forEach((item: any, idx: number) => {
+        console.log(`[Инпут #${idx}] Index: ${item.wallet_index} | Amount: ${item.coin_to_spend.amount} | Parent: ${item.coin_to_spend.parent_coin_info.slice(0, 16)}...`);
+      });
+      console.log("========================================================================\n");
+
+
       // 3. ОТПРАВКА НА БЭКЕНД
       const res = await fetch("api/v1/transactions/build-spend-bundle", {
         method: "POST",
@@ -131,7 +138,6 @@ export function useSendTransaction({
       // 🎯 МАГИЯ: Возвращаем массив индексов для каждого сообщения, чтобы Шаг 2 знал, чем подписывать!
       return {
         ...result,
-        target_wallet_indexes: inputs.map(i => i.wallet_index)
       }
     },
     onSuccess: (data) => {
@@ -145,36 +151,41 @@ export function useSendTransaction({
       setLocalSnapshot(null)
     }
   })
+
+
 const sendTxMutation = useMutation({
     mutationFn: async () => {
-      // КРИТИЧЕСКИЙ ЧЕК: Проверяем наличие массива индексов деривации монет
-      if (!preparedSpendData?.target_wallet_indexes || !pin || !localSnapshot) {
-        throw new Error("Критическая ошибка: отсутствуют индексы деривации или локальный снапшот!")
+      // КРИТИЧЕСКИЙ ЧЕК: Теперь проверяем наличие самого массива спендов, ПИН-кода и снапшота
+      if (!preparedSpendData?.coin_spends || !pin || !localSnapshot) {
+        throw new Error("Критическая ошибка: отсутствуют данные спендов или локальный снапшот!")
       }
       if (pin.length !== 6) throw new Error("ПИН-код должен состоять из 6 цифр")
 
       console.log("\n========================================================")
-      console.log("🔍 [ШАГ 2] ЗАПУЩЕН МУЛЬТИ-ВХОДНОЙ КРИПТО-АУДИТ...")
+      console.log("🔍 [🔍 ШАГ 2] ЗАПУЩЕН МУЛЬТИ-ВХОДНОЙ КРИПТО-АУДИТ (НОВАЯ СТРУКТУРА)...")
       console.log("========================================================")
 
-      // Достаем массивы из ответа Шага 1
+      // Достаем массив спендов из нового ответа Шага 1
       const coinSpendsList = preparedSpendData.coin_spends
-      const messagesList = preparedSpendData.messages_to_sign_hex
-      const walletIndexesList = preparedSpendData.target_wallet_indexes
 
-      if (!coinSpendsList || !messagesList || coinSpendsList.length !== messagesList.length) {
-        throw new Error("Критическая ошибка: Несоответствие структуры данных спендов и сообщений подписи!")
+      if (!coinSpendsList || coinSpendsList.length === 0) {
+        throw new Error("Критическая ошибка: Список спендов от бэкенда пуст!")
       }
 
       // 1. Циклический математический аудит КАЖДОЙ монеты
       for (let i = 0; i < coinSpendsList.length; i++) {
-        const coinSource = coinSpendsList[i].coin
+        const item = coinSpendsList[i]
+        const coinSource = item.coin
         const parentHex = coinSource.parent_coin_info
         const puzzleHashHex = coinSource.puzzle_hash
         const amountMojo = coinSource.amount
 
+        if (!item.message_to_sign_hex) {
+          throw new Error(`Критическая ошибка структуры: отсутствует хэш подписи для монеты #${i}!`)
+        }
+
         const trueCoinId = calculateChiaCoinId(parentHex, puzzleHashHex, amountMojo)
-        const fullMessageHex = messagesList[i].toLowerCase().trim()
+        const fullMessageHex = item.message_to_sign_hex.toLowerCase().trim()
         const coinIdFromMessage = fullMessageHex.substring(64, 128)
 
         console.log(`📡 [Аудит монеты #${i}]`)
@@ -183,7 +194,7 @@ const sendTxMutation = useMutation({
 
         if (coinIdFromMessage !== trueCoinId) {
           console.error(`❌ КРИТИЧЕСКАЯ АТАКА! Coin ID не совпали на монете #${i}!`)
-          throw new Error(`Критическая атака! Бэкенд подменил монету-источник #${i} внутри хэша подписи!`)
+          throw new Error(`Критическая ошибка: Обнаружено несоответствие Coin ID на монете #${i}!`)
         }
       }
       console.log("💪 Математический аудит всех инпутов пройден успешно!")
@@ -201,41 +212,64 @@ const sendTxMutation = useMutation({
       }
       console.log("💪 Снапшот-аудит пройден успешно! Данные чисты.")
 
-      // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ ВСЕХ СООБЩЕНИЙ С ЛОГАМИ РАЗРЯДНОСТИ
+      // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ С АБСОЛЮТНОЙ СИНХРОНИЗАЦИЕЙ ИНДЕКСОВ CHIA
       setStatusMessage("🔐 Подписание транзакции...")
       const clearMnemonic = await getMnemonicForSigning(pin)
 
-      console.log("\n🔑 [КРИПТОГРАФИЯ: ПОДПИСАНИЕ ИНПУТОВ]")
-      const signatures = messagesList.map((msgHex: any, idx: number) => {
-        const currentWalletIndex = walletIndexesList[idx]
-        
-        console.log(`  [Монета #${idx}] -> Деривация по индексу: ${currentWalletIndex}`)
-        console.log(`    - Хэш для подписи (msgHex): ${msgHex}`)
+      console.log("\n🔑 [КРИПТОГРАФИЯ: ПОСЛЕДОВАТЕЛЬНЫЙ МУЛЬТИ-ПОДПИСНЫЙ ЦИКЛ С ИЗОЛЯЦИЕЙ MEMORY]")
+      const signatures: string[] = []
 
+      // Строгий последовательный цикл подписи
+      for (let idx = 0; idx < coinSpendsList.length; idx++) {
+        const item = coinSpendsList[idx]
+        const currentWalletIndex = item.wallet_index
+        const msgHex = item.message_to_sign_hex
 
-        
-        // Вызываем твою оригинальную функцию подписи
-        const sig = signChiaTransaction({
-          mnemonic: clearMnemonic,
-          walletIndex: currentWalletIndex, // Передаем точный динамический индекс монеты (0, 169, 170...)
-          messageHex: msgHex,
-          hiddenPuzzleHashHex: preparedSpendData.hidden_puzzle_hash_hex
-        })
-
-        console.log(`    - Сгенерированная сигнатура (длина: ${sig.length} симв.): 0x${sig.slice(0, 20)}...`)
-        
-        if (sig.length !== 192) {
-          console.error(`❌ Ошибка разрядности! Длина подписи ${sig.length} вместо 192.`);
+        if (currentWalletIndex === undefined || currentWalletIndex === null) {
+          throw new Error(`Критическая ошибка структуры: отсутствует индекс деривации внутри спенда #${idx}!`)
         }
 
-        return sig
-      })
-      console.log("========================================================\n")
-      
-      setStatusMessage("🚀 Отправка пакета трат в сеть...")
+        // Логируем ДО ухода в асинхронный контекст
+        console.log(`\n 📦 [ОЧЕРЕДЬ idx:${idx}] Подготовка таски. Истинный индекс деривации: ${currentWalletIndex}`);
+        console.log(`   • Сообщение (первые 16 симв.): ${msgHex.substring(0, 16)}...`);
 
-      // Формируем чистый массив коин-спендов для отправки на бэк
+        const sig = await new Promise<string>((resolve, reject) => {
+          Promise.resolve().then(() => {
+            try {
+              console.log(`   ⚡ [EXECUTION idx:${idx}] Вызывается signChiaTransaction!`);
+              console.log(`     -> Передаем walletIndex в функцию: ${Number(currentWalletIndex)} (тип: ${typeof Number(currentWalletIndex)})`);
+
+              // 🔥 НОВАЯ СХЕМА: Передаем syntheticOffsetHex вместо hiddenPuzzleHashHex индивидуально для каждого инпута
+              const resultSig = signChiaTransaction({
+                mnemonic: clearMnemonic,
+                walletIndex: Number(currentWalletIndex),
+                messageHex: msgHex,
+                syntheticOffsetHex: item.synthetic_offset_hex, 
+              });
+
+              console.log(`     ✅ Подпись сгенерирована: ${resultSig.substring(0, 32)}...`);
+              resolve(resultSig);
+            } catch (err) {
+              console.error(`     ❌ Ошибка внутри функции подписи для idx:${idx}`, err);
+              reject(err);
+            }
+          });
+        });
+
+        signatures.push(sig);
+      }
+
+      console.log("💪 Все подписи успешно собраны в строгом порядке!")
+
+      // ========================================================================
+      // 🔬 ЗЕРКАЛЬНЫЙ КРИПТО-ДЕБАГ (ДЛЯ СРАВНЕНИЯ С ЛОГАМИ БЭКЕНДА)
+      // ========================================================================
+      console.log("\n==============================================================")
+      console.log("🔬 [РАСШИРЕННЫЙ КРИПТО-ДЕБАГ] ДАННЫЕ СТОРОНЫ ФРОНТЕНДА")
+      console.log("==============================================================")
+
       const cleanCoinSpends = coinSpendsList.map((cs: any) => ({
+        wallet_index: cs.wallet_index,
         coin: {
           parent_coin_info: cs.coin.parent_coin_info,
           puzzle_hash: cs.coin.puzzle_hash,
@@ -245,22 +279,43 @@ const sendTxMutation = useMutation({
         solution: cs.solution
       }))
 
-   
+      const flatMessagesList = coinSpendsList.map((cs: any) => cs.message_to_sign_hex)
+
+      for (let i = 0; i < coinSpendsList.length; i++) {
+        const frontMsgHex = flatMessagesList[i].replace("0x", "").toLowerCase().trim()
+        const frontSigHex = signatures[i].replace("0x", "").toLowerCase().trim()
+
+        console.log(`\n👉 МОНЕТА [${i}] | Индекс во фронте: ${coinSpendsList[i].wallet_index}`)
+        console.log(`   • Message для подписи:      ${frontMsgHex}`)
+        console.log(`   • Подпись от ФРОНТЕНДА:     ${frontSigHex.substring(0, 64)}...`)
+      }
+
+      const payloadToSend = {
+        signatures_list: signatures,
+        coin_spends: cleanCoinSpends,
+        integrity_token: preparedSpendData.integrity_token,
+        messages_signed_hex: flatMessagesList
+      }
+
+      console.log("\n📤 ПОЛНЫЙ JSON СФОРМИРОВАН И ПРОВЕРЕН.");
+      console.log("==============================================================")
+
+      setStatusMessage("🚀 Отправка пакета трат в сеть...")
+
       // Пушим агрегированный массив на бэкенд
       const res = await fetch("/api/v1/transactions/send-tx", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          signatures_list: signatures,
-          coin_spends: cleanCoinSpends,
-          integrity_token: preparedSpendData.integrity_token,
-          messages_signed_hex: messagesList
-        })
+        body: JSON.stringify(payloadToSend)
       })
 
       const result = await res.json()
       console.log("📥 [КОНСОЛЬ-ЛОГ] Финальный ответ бэка на Шаге 2:", result)
-      if (!res.ok || !result.success) throw new Error(result.detail || "Нода отклонила транзакцию")
+
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || result.detail || "Нода отклонила трантранзакцию")
+      }
+
       return result
     },
     onSuccess: (resData) => {

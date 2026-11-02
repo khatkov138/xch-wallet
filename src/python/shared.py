@@ -1,4 +1,7 @@
 import os
+import json
+import hmac
+import httpx
 import requests
 import urllib3
 import hashlib
@@ -10,6 +13,17 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Адрес локальной ноды Chia RPC по умолчанию
 BASE_RPC_URL = "https://localhost:8555"
+
+# Секретный ключ для подписи токенов целостности транзакций
+API_SECRET = os.getenv("API_SECRET", "DEFAULT_FALLBACK_KEY_DO_NOT_USE_IN_PROD").encode("utf-8")
+
+def generate_multi_integrity_token(messages_list: list[str], coin_spends_list: list[dict]) -> str:
+    """
+    Генерирует криптографический HMAC-SHA256 токен для валидации пакета 
+    трат на втором этапе (защита от перехвата и подмены данных транзакции).
+    """
+    serialized = f"{json.dumps(messages_list)}:{json.dumps(coin_spends_list, sort_keys=True)}"
+    return hmac.new(API_SECRET, serialized.encode("utf-8"), hashlib.sha256).hexdigest()
 
 def get_ssl_credentials():
     """
@@ -44,7 +58,6 @@ def get_ssl_credentials():
         return str(c), str(k)
         
     # Резервный хардкод путь для Windows (если стандартный поиск через Path.home() дал сбой)
-    # Скрипт проверит, какая сеть была выбрана, и подставит её в хардкод-путь
     current_net = "testnet11" if "testnet11" in str(root_path) else "mainnet"
     return (
         f"C:\\Users\\khatk\\.chia\\{current_net}\\config\\ssl\\full_node\\private_full_node.crt", 
@@ -53,7 +66,7 @@ def get_ssl_credentials():
 
 def get_wallet_pk_unhardened(master_pk: G1Element, index: int) -> G1Element:
     """
-    Выводит несвязанный (unhardened) публичный ключ для конкретного индекса кошелька.
+    Выводит несвязанный (unhardened) публичный ключ для конкретного index кошелька.
     """
     path = [12381, 8444, 2, index]
     current_pk = master_pk

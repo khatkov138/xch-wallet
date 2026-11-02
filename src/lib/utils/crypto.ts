@@ -50,16 +50,16 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 export function puzzleHashToAddress(puzzleHash: string, prefix: string): string {
-  if (!puzzleHash || !prefix) return ""
-  try {
-    const cleanHash = puzzleHash.startsWith("0x") ? puzzleHash.slice(2) : puzzleHash
-    const bytes = hexToBytes(cleanHash)
-    const words = bech32m.toWords(bytes)
-    return bech32m.encode(prefix, words)
-  } catch (err) {
-    console.error("❌ Ошибка кодирования адреса:", err)
-    return ""
-  }
+    if (!puzzleHash || !prefix) return ""
+    try {
+        const cleanHash = puzzleHash.startsWith("0x") ? puzzleHash.slice(2) : puzzleHash
+        const bytes = hexToBytes(cleanHash)
+        const words = bech32m.toWords(bytes)
+        return bech32m.encode(prefix, words)
+    } catch (err) {
+        console.error("❌ Ошибка кодирования адреса:", err)
+        return ""
+    }
 }
 
 /**
@@ -188,110 +188,138 @@ export async function deriveMasterPublicKey(mnemonic: string): Promise<string> {
 
 
 
+// Гарантированный Big-Endian перевод числа в 4 байта
+function intToBytes4BE(value: number): Uint8Array {
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    view.setUint32(0, value, false); // false = Big Endian (канонично для Chia Unhardened)
+    return new Uint8Array(buffer);
+}
 
 export function chiaDeriveChildSkUnhardened(parentSk: any, index: number): any {
+    // 1. Получаем байты публичного ключа родителя (всегда 48 байт)
     const parentPkBytes = parentSk.getG1().toBytes();
-    const indexBytes = intToBytes4(index);
+
+    // 2. Кодируем индекс строго в 4 байта Big-Endian
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    view.setUint32(0, index, false); // false = Big Endian
+    const indexBytes = new Uint8Array(buffer);
+
+    // 3. Склеиваем PK и Index (52 байта)
     const concat = new Uint8Array(parentPkBytes.length + indexBytes.length);
-    concat.set(parentPkBytes, 0); concat.set(indexBytes, parentPkBytes.length);
-    const hash = sha256(concat);
-    const hashBigInt = hash.reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
-    const parentSkBigInt = parentSk.toBytes().reduce((acc: bigint, v: number) => (acc << 8n) + BigInt(v), 0n);
+    concat.set(parentPkBytes, 0);
+    concat.set(indexBytes, parentPkBytes.length);
+
+    // 4. Хэшируем буфер через SHA-256 (получаем 32 байта)
+    const hashBytes = sha256(concat);
+
+    // 5. Переводим хэш и родительский ключ в BigInt строго через Хекс (Big-Endian представление)
+    const hashHex = Buffer.from(hashBytes).toString("hex");
+    const parentSkHex = Buffer.from(parentSk.toBytes()).toString("hex");
+
+    const hashBigInt = BigInt("0x" + hashHex);
+    const parentSkBigInt = BigInt("0x" + parentSkHex);
+
+    // 6. Сложение скаляров по модулю порядка группы BLS12-381
+    const GROUP_ORDER = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
     const childSkBigInt = (parentSkBigInt + hashBigInt) % GROUP_ORDER;
-    return PrivateKey.fromHex(childSkBigInt.toString(16).padStart(64, '0'));
-}
 
-export function calculateSyntheticSecretKey(
-    targetSk: InstanceType<typeof PrivateKey>,
-    hiddenPuzzleHashHex: string // 🔥 Принимаем точный хэш с сервера
-): InstanceType<typeof PrivateKey> {
-    const targetPkBytes = targetSk.getG1().toBytes()
-    const hiddenPuzzleHashBytes = Buffer.from(hiddenPuzzleHashHex.replace("0x", ""), "hex")
+    // 7. БЕЗОПАСНАЯ КОНВЕРТАЦИЯ: Переводим BigInt обратно в 32-байтовый буфер, 
+    // полностью исключая баги работы строк toString(16) в JS
+    const childBytes = new Uint8Array(32);
+    let tempBigInt = childSkBigInt;
+    for (let i = 31; i >= 0; i--) {
+        childBytes[i] = Number(tempBigInt & 0xffn);
+        tempBigInt >>= 8n;
+    }
 
-    // Склеиваем байты публичного ключа и скрытого паззла (48 байт + 32 байта = 80 байт)
-    const concat = new Uint8Array(targetPkBytes.length + hiddenPuzzleHashBytes.length)
-    concat.set(targetPkBytes, 0)
-    concat.set(hiddenPuzzleHashBytes, targetPkBytes.length)
-
-    // Хэшируем склеенный буфер через SHA-256
-    const offsetHashBytes = sha256(concat)
-
-    // Переводим байты в BigInt криптографической длинной арифметики
-    const offsetBigInt = BigInt("0x" + Buffer.from(offsetHashBytes).toString("hex"))
-    const targetSkBigInt = BigInt("0x" + Buffer.from(targetSk.toBytes()).toString("hex"))
-
-    // Сдвиг скаляров по модулю поля группы BLS12-381
-    const syntheticSkBigInt = (targetSkBigInt + offsetBigInt) % GROUP_ORDER
-
-    return PrivateKey.fromHex(syntheticSkBigInt.toString(16).padStart(64, '0'))
+    // 8. Инициализируем приватный ключ из чистого канонического буфера байт
+    const finalHex = Buffer.from(childBytes).toString("hex");
+    return PrivateKey.fromHex(finalHex);
 }
 
 
-interface SignParams {
-    mnemonic: string
-    walletIndex: number
-    messageHex: string
-    hiddenPuzzleHashHex: string
-}
 
 /**
  * Безопасно деривирует некостодиальную ветку ключей Chia и генерирует валидную подпись транзакции
  */
-export function signChiaTransaction({ mnemonic, walletIndex, messageHex, hiddenPuzzleHashHex }: SignParams): string {
-    // 1. Восстанавливаем приватный корень из сид-фразы
+export function signChiaTransaction({ mnemonic, walletIndex, messageHex, syntheticOffsetHex }: {
+    mnemonic: string;
+    walletIndex: number;
+    messageHex: string;
+    syntheticOffsetHex: string; // 🔥 Принимаем готовый оффсет-скаляр с бэкенда
+}): string {
     const seed = bip39.mnemonicToSeedSync(mnemonic.trim())
     const masterSk = PrivateKey.fromSeed(seed)
 
-    // 2. Деривируем стандартную ветку кошелька Chia (m/12381/8444/2/) строго по уровням,
-    // чтобы избежать мутации ссылок на один и тот же приватник в JS-памяти
+    // Каноническая unhardened деривация ветки Core Wallet Chia
     const lvl1 = chiaDeriveChildSkUnhardened(masterSk, 12381)
     const lvl2 = chiaDeriveChildSkUnhardened(lvl1, 8444)
     const walletBranchSk = chiaDeriveChildSkUnhardened(lvl2, 2)
+    const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, Number(walletIndex))
 
-    // 3. Получаем приватный ключ для конкретного индекса монеты (в нашем случае принудительно 0)
-    const targetSk = chiaDeriveChildSkUnhardened(walletBranchSk, walletIndex)
+    // 🎯 ШАГ 1: Превращаем присланный Python-бэкендом оффсет строго в PrivateKey смещения.
+    // Флаг 'false' указывает библиотеке брать байты как есть, без повторного хэширования сида.
+    const offsetSkBytes = Buffer.from(syntheticOffsetHex.replace("0x", ""), "hex")
+    const offsetSk = PrivateKey.fromBytes(offsetSkBytes)
 
-    // 4. Делаем криптографический сдвиг ключа под стандарт пазлов Chia (синтетический ключ)
-    const syntheticSk = calculateSyntheticSecretKey(targetSk, hiddenPuzzleHashHex)
+    // 🎯 ШАГ 2: КРИПТОГРАФИЧЕСКОЕ СЛОЖЕНИЕ КЛЮЧЕЙ НА УРОВНЕ C++ (WASM)
+    // Никаких строк, BigInt и GROUP_ORDER. Складываем скаляры внутри памяти библиотеки.
+    let syntheticSk: InstanceType<typeof PrivateKey>;
 
-    // 5. Подписываем хэш сообщения через нативную схему AugSchemeMPL Chia
-    const messageBytes = Buffer.from(messageHex, 'hex')
+    if (typeof (targetSk as any).add === 'function') {
+        // Если твоя версия библиотеки имеет встроенный метод сложения .add()
+        syntheticSk = (targetSk as any).add(offsetSk);
+    } else {
+        // Если прямого метода нет, aggregate выполняет абсолютно идентичное сложение скаляров на кривой
+        // @ts-ignore
+        syntheticSk = PrivateKey.aggregate([targetSk, offsetSk]);
+    }
+
+    // Очищаем и переводим входящее сообщение строго в сырые байты
+    const cleanMsgHex = messageHex.replace("0x", "").trim().toLowerCase();
+    const messageBytes = Buffer.from(cleanMsgHex, 'hex')
+
+    console.log(`[КРИТИЧЕСКИЙ ДЕБАГ] Длина байт сообщения для подписи на фронте: ${messageBytes.length} байт`);
+
+    // Подписываем сырой массив байт
     const signature = AugSchemeMPL.sign(syntheticSk, messageBytes)
 
-    // Возвращаем готовую шестнадцатеричную строку сигнатуры для бэкенда
     return Buffer.from(signature.toBytes()).toString('hex')
 }
 
+
 export function calculateChiaCoinId(parentHex: string, puzzleHashHex: string, amountMojo: number | bigint): string {
-  const cleanParent = parentHex.replace("0x", "").toLowerCase().trim();
-  const cleanPuzzle = puzzleHashHex.replace("0x", "").toLowerCase().trim();
+    const cleanParent = parentHex.replace("0x", "").toLowerCase().trim();
+    const cleanPuzzle = puzzleHashHex.replace("0x", "").toLowerCase().trim();
 
-  const parentBytes = Uint8Array.from(cleanParent.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
-  const puzzleBytes = Uint8Array.from(cleanPuzzle.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
-  
-  // В Chia числа сериализуются как знаковые Big-Endian с минимальной длиной
-  let val = BigInt(amountMojo);
-  const amountArray: number[] = [];
-  
-  if (val === 0n) {
-    amountArray.push(0);
-  } else {
-    while (val > 0n) {
-      amountArray.unshift(Number(val & 0xffn));
-      val >>= 8n;
-    }
-    // Если старший бит равен 1, добавляем 00, чтобы число не считалось отрицательным в CLVM
-    if (amountArray[0] >= 0x80) {
-      amountArray.unshift(0);
-    }
-  }
-  const amountBytes = Uint8Array.from(amountArray);
+    const parentBytes = Uint8Array.from(cleanParent.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
+    const puzzleBytes = Uint8Array.from(cleanPuzzle.match(/.{1,2}/g)!.map(b => parseInt(b, 16)));
 
-  // Склеиваем точный буфер
-  const concat = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
-  concat.set(parentBytes, 0);
-  concat.set(puzzleBytes, parentBytes.length);
-  concat.set(amountBytes, parentBytes.length + puzzleBytes.length);
-  
-  return Array.from(sha256(concat)).map(b => b.toString(16).padStart(2, '0')).join('');
+    // В Chia числа сериализуются как знаковые Big-Endian с минимальной длиной
+    let val = BigInt(amountMojo);
+    const amountArray: number[] = [];
+
+    if (val === 0n) {
+        amountArray.push(0);
+    } else {
+        while (val > 0n) {
+            amountArray.unshift(Number(val & 0xffn));
+            val >>= 8n;
+        }
+        // Если старший бит равен 1, добавляем 00, чтобы число не считалось отрицательным в CLVM
+        if (amountArray[0] >= 0x80) {
+            amountArray.unshift(0);
+        }
+    }
+    const amountBytes = Uint8Array.from(amountArray);
+
+    // Склеиваем точный буфер
+    const concat = new Uint8Array(parentBytes.length + puzzleBytes.length + amountBytes.length);
+    concat.set(parentBytes, 0);
+    concat.set(puzzleBytes, parentBytes.length);
+    concat.set(amountBytes, parentBytes.length + puzzleBytes.length);
+
+    return Array.from(sha256(concat)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
