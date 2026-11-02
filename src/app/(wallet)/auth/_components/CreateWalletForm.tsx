@@ -10,10 +10,9 @@ import { encryptMnemonic } from "@/lib/utils/crypto"
 
 interface EncryptPhraseFormProps {
   phraseToEncrypt: string
-  onAuthComplete: () => void
 }
 
-export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhraseFormProps) {
+export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
   const router = useRouter()
   
   const { loginWithClearMnemonic } = useWalletAuth()
@@ -30,7 +29,7 @@ export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhr
   const handlePinComplete = async (pin: string, clearPin: () => void) => {
     setIsLocked(true)
 
-    // Используем предсказуемый промис задержки
+    // Используем предсказуемый промис задержки для бруталистичного UX
     await new Promise(resolve => setTimeout(resolve, 300))
 
     if (step === "create") {
@@ -46,27 +45,29 @@ export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhr
           const cleanPhrase = phraseToEncrypt.trim().toLowerCase().replace(/\s+/g, " ")
           const wordsCount = cleanPhrase.split(" ").filter(Boolean).length
 
-          // Строгая проверка: только 24 слова
+          // Строгая проверка: только 24 слова для стандартов Chia (BIP-39 / BLS12-381)
           if (wordsCount !== 24) {
-            throw new Error("Переданная фраза повреждена или не содержит 24 слова")
+            throw new Error("Фраза повреждена или не содержит 24 слова")
           }
 
-          // 1. Шифруем
+          // 1. Криптографическое шифрование мнемоники
           const encryptedData = await encryptMnemonic(cleanPhrase, pin)
 
-          // 2. Сохраняем на жесткий диск через Zustand (localStorage)
-          vault.saveEncryptedMnemonic(encryptedData)
+          // 2. Сохраняем ЗАШИФРОВАННЫЙ вольт на диск
+          await vault.saveEncryptedMnemonic(encryptedData)
 
-          // 3. Одновременно поднимаем сессию в оперативке (sessionStorage)
+          // 3. Поднимаем сессию в оперативной памяти (Строго RAM через Zustand, без утечек в Storage)
           await loginWithClearMnemonic(cleanPhrase)
 
-          onAuthComplete()
+          // 4. Жесткий атомарный переход без лишних триггеров стейта родителя
           router.push("/dashboard")
         } catch (err: any) {
           console.error("❌ Криптографическая ошибка при шифровании фразы:", err)
-          alert(`Ошибка: ${err.message || err}`)
-
+          
+          // Выводим ошибку в бруталистичный сабтайтл, окрашенный в розовый неон через PinCodeLayout
           setIsError(true)
+          setSubtitle(err.message || "Критическая ошибка шифрования ключей")
+
           setTimeout(() => {
             setIsError(false)
             setIsLocked(false)
@@ -74,7 +75,7 @@ export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhr
             clearPin()
             setTempPin("")
             setSubtitle("Для защиты ключей и подтверждения операций")
-          }, 1200)
+          }, 1500)
         }
       } else {
         console.warn("❌ Ошибка: Введенные ПИН-коды не совпадают!")
@@ -90,7 +91,7 @@ export function CreateWalletForm({ phraseToEncrypt, onAuthComplete }: EncryptPhr
           clearPin()
           setTempPin("")
           setSubtitle("Для защиты ключей и подтверждения операций")
-        }, 1200)
+        }, 1500)
       }
     }
   }

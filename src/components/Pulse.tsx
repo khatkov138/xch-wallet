@@ -1,86 +1,114 @@
 'use client';
-import { ShieldAlert, Loader2 } from 'lucide-react';
+
+import React, { useMemo } from 'react';
+import Link from 'next/link';
+import { AlertTriangle, Server, ShieldAlert } from 'lucide-react';
 import { useWalletStatus } from "@/hooks/useWalletStatus";
 
-export default function Pulse() {
-  const { isPythonDown, isRpcDown, isNotSynced, hasError, isLoading, nodeData } = useWalletStatus();
-
-  // 🎯 ЗАЩИТА 1: Пока идет первая загрузка и данных нет — ничего не показываем (убираем ложное мигание)
-  if (isLoading && !nodeData) return null;
-
-  // 🎯 ЗАЩИТА 2: Если нода синхронизирована и нет критических ошибок — полностью скрываем плашку
-  if (nodeData?.isSynced === true && !hasError) return null;
-
-  // Проверяем состояние инициализации ноды (фейковые 100% при старте)
-  const isInitializing = isNotSynced && nodeData && (
+// 🎯 ШАГ 1: Изолируем реактивный текст. Теперь изменения процентов 
+// ререндерят ТОЛЬКО эту строчку, не затрагивая DOM родительской плашки.
+function SyncingDescription() {
+  const { nodeData } = useWalletStatus();
+  
+  const isInitializing = nodeData && (
     nodeData.currentHeight === nodeData.targetHeight ||
     nodeData.progressPercent === "100.0000"
   );
 
-  // Стили и тексты по умолчанию
-  let title = "Технические работы";
-  let description = "Проблема с сетью кошелька...";
-  let borderColorClass = "border-zinc-900/50";
-  let badgeColorClass = "text-zinc-400";
-  let dotColorClass = "bg-zinc-500";
-  let isLoaderActive = false;
-
-  if (isPythonDown) {
-    // 1. Упал питоновский бэк
-    title = "Сервер отключен";
-    description = "Потеряно соединение с бэкендом API";
-    borderColorClass = "border-red-500/20";
-    badgeColorClass = "text-red-400";
-    dotColorClass = "bg-red-500";
-  } else if (isRpcDown) {
-    // 2. Питон работает, но демоны Chia / RPC лежат
-    title = "Сбой RPC ноды";
-    description = "Ошибка mTLS авторизации Full Node";
-    borderColorClass = "border-red-500/20";
-    badgeColorClass = "text-[#FF2E93]";
-    dotColorClass = "bg-[#FF2E93]";
-  } else if (isNotSynced) {
-    // 3. Штатный режим синхронизации
-    title = "Синхронизация сети";
-    borderColorClass = "border-zinc-900/50";
-    badgeColorClass = "text-amber-400";
-    dotColorClass = "bg-amber-500";
-    isLoaderActive = true;
-
-    if (isInitializing) {
-      description = "Инициализация ноды Chia и поиск пиров...";
-    } else {
-      description = `Догоняем блоки сети Chia... (${nodeData?.progressPercent ?? "0.00"}%)`;
-    }
-  }
-
   return (
-    <div className="w-full h-[54px] mb-2 animate-in fade-in slide-in-from-top-2 duration-300">
-      <div className={`flex items-center gap-3 p-3 bg-zinc-900/20 border rounded-[24px] h-full ${borderColorClass}`}>
-
-        {/* Иконка / Вращающийся спиннер */}
-        <div className="h-7 w-7 rounded-xl flex items-center justify-center bg-zinc-800 shrink-0">
-          {isLoaderActive ? (
-            <Loader2 size={14} className="animate-spin text-amber-400" />
-          ) : (
-            <ShieldAlert size={14} className={badgeColorClass} />
-          )}
-        </div>
-
-        {/* Текстовая зона */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className={`h-1 w-1 rounded-full animate-pulse ${dotColorClass}`} />
-            <p className="text-[10px] font-bold text-white uppercase tracking-wider leading-none">
-              {title}
-            </p>
-          </div>
-          <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mt-1 leading-none truncate">
-            {description}
-          </p>
-        </div>
-
-      </div>
-    </div>
+    <span>
+      {isInitializing
+        ? "Синхронизируемся с блокчейном..."
+        : `Синхронизируемся с блокчейном... (${nodeData?.progressPercent ?? "0.00"}%)`}
+    </span>
   );
 }
+
+// 🎯 ШАГ 2: Главный каркас. Защищен с помощью React.memo.
+export const Pulse = React.memo(function Pulse() {
+  // Достаем только контролирующие стейт-машину флаги
+  const { isPythonDown, isRpcDown, isNotSynced, hasError, isLoading, nodeData } = useWalletStatus();
+
+  const isSkeleton = isLoading && !nodeData;
+  const isHidden = nodeData?.isSynced === true && !hasError;
+
+  const config = useMemo(() => {
+    if (isSkeleton || isHidden) return null;
+
+    // 🚨 КРИТИЧЕСКАЯ ОШИБКА: Сервер упал
+    if (isPythonDown) {
+      return {
+        title: "Сервер отключен",
+        description: "Потеряно соединение с бэкендом API",
+        borderColorClass: "border-[#FF2E93]/20 bg-zinc-950/40 backdrop-blur-md hover:border-[#FF2E93]/40",
+        badgeColorClass: "text-[#FF2E93]",
+        titleColorClass: "text-[#FF2E93]",
+        Icon: Server,
+        renderDynamicDesc: false
+      };
+    }
+      
+    // 🚨 КРИТИЧЕСКАЯ ОШИБКА: Сбой RPC ноды
+    if (isRpcDown) {
+      return {
+        title: "Сбой RPC ноды",
+        description: "Ошибка mTLS авторизации Full Node",
+        borderColorClass: "border-[#FF2E93]/20 bg-zinc-950/40 backdrop-blur-md hover:border-[#FF2E93]/40",
+        badgeColorClass: "text-[#FF2E93]",
+        titleColorClass: "text-[#FF2E93]",
+        Icon: Server,
+        renderDynamicDesc: false
+      };
+    }
+      
+    // ⚠️ ВАРНИНГ СЕТИ: Синхронизация
+    if (isNotSynced) {
+      return {
+        title: "Временные неполадки",
+        borderColorClass: "border-zinc-900/60 bg-zinc-950/40 backdrop-blur-md hover:bg-zinc-900/40 hover:border-zinc-700/60",
+        badgeColorClass: "text-yellow-400", 
+        titleColorClass: "text-white",
+        Icon: AlertTriangle,
+        renderDynamicDesc: true // Разрешаем реактивный рендер процентов внутри
+      };
+    }
+
+    return null;
+  }, [isPythonDown, isRpcDown, isNotSynced, isSkeleton, isHidden]);
+
+  if (isHidden) return null;
+
+  return (
+    <div className="w-full h-[54px] mb-2 relative select-none">
+      {isSkeleton ? (
+        <div className="absolute inset-0 flex items-center gap-3 p-3 bg-zinc-950/40 border border-zinc-900/60 rounded-[24px] h-full animate-pulse backdrop-blur-md">
+          <div className="h-7 w-7 rounded-xl bg-zinc-900/60 border border-zinc-850 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="h-2.5 bg-zinc-900 rounded-full w-24" />
+            <div className="h-2 bg-zinc-900/60 rounded-full w-40" />
+          </div>
+        </div>
+      ) : config ? (
+        <Link
+          href="/status"
+          className={`absolute inset-0 flex items-center gap-3 p-3 border rounded-[24px] h-full transition-all duration-300 ease-in-out cursor-pointer active:scale-[0.99] ${config.borderColorClass}`}
+        >
+          <div className="h-7 w-7 rounded-xl flex items-center justify-center bg-zinc-900/40 border border-zinc-850 shrink-0 shadow-sm">
+            <config.Icon size={13} className={config.badgeColorClass} />
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p className={`text-[10px] font-black uppercase tracking-wider leading-none transition-colors duration-300 ${config.titleColorClass}`}>
+              {config.title}
+            </p>
+            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mt-1 leading-none truncate">
+              {config.renderDynamicDesc ? <SyncingDescription /> : config.description}
+            </p>
+          </div>
+        </Link>
+      ) : null}
+    </div>
+  );
+});
+
+export default Pulse;

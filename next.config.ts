@@ -1,6 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+
+   reactStrictMode: false,
   serverExternalPackages: ['chia-wallet-lib', 'clvm-lib', 'chia-bls'],
   /* config options here */
   experimental: {

@@ -5,24 +5,27 @@ import { X, Copy, Check, Share2 } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import QRCode from "qrcode"
+import { useWalletDashboard } from "@/hooks/useWalletDashboard"
+import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
 
-// 🔥 ИСПРАВЛЕНИЕ: Убрали walletAddress из пропсов, модалка теперь независима
 interface ReceiveModalProps {
   isOpen: boolean
   onClose: () => void 
 }
 
 export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
-  // 1. Вытаскиваем массив адресов из твоего хука баланса
-
   const [copied, setCopied] = useState(false)
   const [qrSvg, setQrSvg] = useState<string>("")
 
-  // Достаем самый первый сгенерированный адрес (Index 0)
-  const walletAddress =  "txchadress"
-  const isAddressLoaded = walletAddress && walletAddress.trim() !== ""
+  const { addresses, isLoading: isDashboardLoading } = useWalletDashboard()
 
-  // Векторная генерация QR-кода прямо в браузере без внешних запросов
+  const targetObj = addresses && addresses.length > 0
+    ? (addresses.find((a: any) => a.index === 0) || addresses)
+    : null
+
+  const walletAddress = usePuzzleHashToAddress(targetObj?.puzzle_hash)
+  const isAddressLoaded = !isDashboardLoading && walletAddress !== ""
+
   useEffect(() => {
     if (isAddressLoaded && isOpen) {
       QRCode.toString(
@@ -31,10 +34,7 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
           type: "svg",
           margin: 1,
           width: 160,
-          color: {
-            dark: "#09090b",  // Цвет модулей QR-кода
-            light: "#ffffff", // Чистый белый фон для сканирования
-          },
+          color: { dark: "#09090b", light: "#ffffff" },
         },
         (err, string) => {
           if (!err && string) setQrSvg(string)
@@ -43,7 +43,6 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
     }
   }, [walletAddress, isOpen, isAddressLoaded])
 
-  // Если шторка закрыта — не рендерим ничего
   if (!isOpen) return null
 
   const handleCopy = async () => {
@@ -61,10 +60,7 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
     if (!isAddressLoaded) return
     if (navigator.share) {
       try {
-        await navigator.share({
-          title: 'Мой Chia (XCH) Адрес',
-          text: walletAddress,
-        })
+        await navigator.share({ title: 'Мой Chia (XCH) Адрес', text: walletAddress })
       } catch (e) {
         console.log("Пользователь отменил шеринг")
       }
@@ -74,14 +70,20 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm transition-all duration-300 animate-in fade-in">
+    // ⚡ АДАПТИВНЫЙ КОНТЕЙНЕР: на мобилках снизу (items-end), на десктопе в центре (sm:items-center) + отступы sm:p-4
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 transition-all duration-300 animate-in fade-in">
       {/* Закрытие модалки при клике на задний фон */}
       <div className="absolute inset-0" onClick={onClose} />
 
-      {/* Контейнер шторки — выезжает снизу вверх */}
-      <div className="relative w-full max-w-md bg-zinc-900 border-t border-zinc-800 rounded-t-[32px] p-6 space-y-6 shadow-2xl animate-in slide-in-from-bottom duration-300 z-10">
-        {/* Хэндл шторки для удобного свайпа визуально */}
-        <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto -mt-2 mb-2 select-none" />
+      {/* 
+        ⚡ АДАПТИВНОЕ ОКНО:
+        - На мобилках скруглены только верхние углы (rounded-t-[32px]), на десктопе все углы круглые (sm:rounded-[28px])
+        - На мобилках выезжает снизу (slide-in-from-bottom), на десктопе мягко увеличивается из центра (sm:zoom-in-95)
+      */}
+      <div className="relative w-full max-w-md bg-zinc-900 border-t border-zinc-800 sm:border rounded-t-[32px] sm:rounded-[28px] p-6 space-y-6 shadow-2xl animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 z-10">
+        
+        {/* Хэндл шторки — скрывается на десктопе (sm:hidden) */}
+        <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto -mt-2 mb-2 select-none sm:hidden" />
 
         {/* Заголовок модалки */}
         <div className="flex items-center justify-between">
@@ -100,7 +102,7 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
         {/* Блок QR-кода */}
         <div className="flex flex-col items-center justify-center space-y-4 py-2">
           <div className="relative p-4 bg-white rounded-3xl shadow-xl shadow-[#FF2E93]/5 border-4 border-zinc-950 ring-1 ring-zinc-800 min-w-[192px] min-h-[192px] flex items-center justify-center">
-            {qrSvg ? (
+            {isAddressLoaded && qrSvg ? (
               <div 
                 className="w-40 h-40 select-none" 
                 dangerouslySetInnerHTML={{ __html: qrSvg }} 
@@ -122,7 +124,7 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
             <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-0.5">
               Ваш публичный адрес кошелька
             </div>
-            <div className="font-mono text-xs text-zinc-300 break-all select-all loading-relaxed tracking-tight bg-zinc-900/40 p-3 rounded-xl border border-zinc-900">
+            <div className="font-mono text-xs text-zinc-300 break-all select-all loading-relaxed tracking-tight bg-zinc-900/40 p-3 rounded-xl border border-zinc-900 min-h-[42px] flex items-center">
               {isAddressLoaded ? walletAddress : "Ожидание деривации..."}
             </div>
           </CardContent>

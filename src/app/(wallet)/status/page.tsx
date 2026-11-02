@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { Server, ShieldAlert, ArrowLeft } from "lucide-react"
-import { WalletLayout } from "@/components/WalletLayout"
+
 import { useWalletStatus } from "@/hooks/useWalletStatus" // 🎯 ИМПОРТИРУЕМ НАШ ЕДИНЫЙ ХУК
 
 // Импортируем атомарные UI-компоненты
@@ -74,7 +74,7 @@ export default function StatusPage() {
   }, [nodeData])
 
   return (
-    <WalletLayout variant="dashboard">
+   
       <div className="w-full space-y-5 select-none">
 
         {/* Верхняя навигационная панель */}
@@ -148,6 +148,6 @@ export default function StatusPage() {
           </div>
         )}
       </div>
-    </WalletLayout>
+   
   )
 }

@@ -61,32 +61,34 @@ export function useSendTransaction({
 
       const totalMojosToSend = Math.round(xch * 1_000_000_000_000)
       const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
-      const required = totalMojosToSend + totalFeeMojos
+      
+      // 🎯 ЖЕЛЕЗНЫЙ ФИКС: Требуемая сумма для поиска монет — это чисто сумма отправки.
+      // Никакие комиссии сюда не прибавляем, так как бэк сам распределит остатки монет.
+      const required = totalMojosToSend 
 
       let selectedItems = []
       let accumulatedAmount = 0
 
-      // 🎯 В ТУПУЮ СХОДУ: Сортируем абсолютно ВСЕ монеты от больших к мелким (b - a)
+      // Сортируем абсолютно ВСЕ монеты от больших к мелким (b - a)
       const sortedCoins = [...unspentCoins]
         .sort((a: any, b: any) => b.coin.amount - a.coin.amount)
 
-      // Складываем монеты в массив, пока не наберется нужная сумма
+      // Складываем монеты в массив, пока не наберется нужная сумма отправки
       for (const item of sortedCoins) {
         selectedItems.push(item)
         accumulatedAmount += item.coin.amount
         if (accumulatedAmount >= required) {
-          break // Набрали сумму — выходим
+          break // Набрали сумму отправки — выходим
         }
       }
 
-      // Если после прохода по всем монетам сумма не набралась — выкидываем ошибку
+      // Проверка баланса строго по чистой сумме отправки
       if (accumulatedAmount < required) {
-        throw new Error(`Недостаточно монет на всех адресах кошелька! Набрано: ${accumulatedAmount} / Требуется: ${required} mojo`)
+        throw new Error(`Недостаточно монет на всех адресах кошелька! Набрано: ${accumulatedAmount} / Требуется для отправки: ${required} mojo`)
       }
 
       // 2. ФОРМИРОВАНИЕ МАССИВА INPUTS ДЛЯ БЭКЕНДА
       const inputs = selectedItems.map((item: any) => {
-        // Находим публичный ключ для каждой конкретной монеты по её puzzle_hash
         const matchedAddressData = walletAddresses.find(
           (addr: any) => addr.puzzle_hash.toLowerCase() === item.coin.puzzle_hash.toLowerCase()
         )
@@ -99,11 +101,11 @@ export function useSendTransaction({
         return {
           coin_pk_hex: coinPkHex,
           coin_to_spend: item.coin,
-          wallet_index: item.wallet_index // 🎯 Прокидываем оригинальный индекс деривации конкретной монеты наружу
+          wallet_index: item.wallet_index 
         }
       })
 
-      // Запоминаем локальный снапшот (берем walletIndex первой ведущей монеты)
+      // Запоминаем локальный снапшот (walletIndex первой ведущей монеты)
       const snapshot: LocalSnapshot & { walletIndex: number } = {
         targetAddress: targetAddress.trim(),
         mojosToSend: totalMojosToSend,
@@ -112,22 +114,21 @@ export function useSendTransaction({
       }
       setLocalSnapshot(snapshot)
 
-      console.log("========= 🟩 ФРОНТЕНД: ПОРЯДКОВЫЙ ПУЛ МОНЕТ (ОТПРАВКА НА БИЛД) =========");
+      console.log("========= 🟩 ФРОНТЕНД: ПОРЯДКОВЫЙ ПУЛ МОНЕТ (БЕЗ УЧЕТА КОМИССИЙ НА ФРОНТЕ) =========");
       inputs.forEach((item: any, idx: number) => {
         console.log(`[Инпут #${idx}] Index: ${item.wallet_index} | Amount: ${item.coin_to_spend.amount} | Parent: ${item.coin_to_spend.parent_coin_info.slice(0, 16)}...`);
       });
       console.log("========================================================================\n");
-
 
       // 3. ОТПРАВКА НА БЭКЕНД
       const res = await fetch("api/v1/transactions/build-spend-bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          inputs: inputs, // Отправляем сформированный массив монет
+          inputs: inputs, 
           send_to_address: snapshot.targetAddress,
           mojos_to_send: snapshot.mojosToSend,
-          fee_mojos: snapshot.feeMojos
+          fee_mojos: snapshot.feeMojos // Передаем значение комиссии чисто информативно, бэк сам применит его внутри спенд-бандла
         })
       })
 
@@ -135,7 +136,6 @@ export function useSendTransaction({
       console.log("📥 [КОНСОЛЬ-ЛОГ] Ответ бэка на Шаге 1:", result)
       if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить транзакцию")
 
-      // 🎯 МАГИЯ: Возвращаем массив индексов для каждого сообщения, чтобы Шаг 2 знал, чем подписывать!
       return {
         ...result,
       }
@@ -151,6 +151,7 @@ export function useSendTransaction({
       setLocalSnapshot(null)
     }
   })
+
 
 
   const sendTxMutation = useMutation({
