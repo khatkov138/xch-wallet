@@ -1,18 +1,17 @@
-import os, httpx, hmac, hashlib, json
+import os
+import httpx
 from fastapi import APIRouter, Body, HTTPException
 from dotenv import load_dotenv
-from chia_rs import G1Element, Coin, CoinSpend, Program, PrivateKey
+from chia_rs import G1Element, Coin, CoinSpend, Program
 from chia.types.blockchain_format.program import Program as PyProgram
 from chia.util.bech32m import decode_puzzle_hash
-from chia.wallet.derive_keys import master_sk_to_wallet_sk_unhardened
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     puzzle_for_pk, 
     solution_for_conditions, 
     DEFAULT_HIDDEN_PUZZLE_HASH,
-    calculate_synthetic_offset  # 🔥 Официальный криптографический сдвиг Chia
+    calculate_synthetic_offset
 )
 from chia.wallet.puzzles.puzzle_utils import make_create_coin_condition
-from chia.util.keychain import mnemonic_to_seed
 from shared import get_ssl_credentials, fetch_genesis, BASE_RPC_URL, generate_multi_integrity_token
 
 load_dotenv()
@@ -29,7 +28,7 @@ async def check_node_synced_internal(client: httpx.AsyncClient):
         
 @tx_router.post("/build-spend-bundle")
 async def build_spend_bundle(
-    inputs: list[dict] = Body(..., description="Массив объектов {coin_pk_hex, coin_to_spend}"),
+    inputs: list[dict] = Body(..., description="Массив объектов {coin_pk_hex, coin_to_spend, wallet_index}"),
     send_to_address: str = Body(..., embed=True),
     mojos_to_send: int = Body(..., embed=True),
     fee_mojos: int = Body(0, embed=True)
@@ -45,21 +44,6 @@ async def build_spend_bundle(
             await check_node_synced_internal(c)
         
         genesis = fetch_genesis(cert, key)
-        
-        # 🎯 СОСТОЯТЕЛЬНАЯ КАРТА ИНДЕКСОВ: Пре-генерация 500 дефолтных
-        try:
-            TEST_MNEMONIC = "material harvest garage wish seed possible item solar zero pupil off saddle glass dial burden desk apology wrap ivory work need favorite tilt burden"
-            seed = mnemonic_to_seed(TEST_MNEMONIC)
-            master_sk = PrivateKey.from_seed(seed)
-            
-            db_ph_map = {}
-            for i in range(500):
-                child_sk = master_sk_to_wallet_sk_unhardened(master_sk, i)
-                w_pk = child_sk.get_g1()
-                ph_clean = puzzle_for_pk(w_pk).get_tree_hash().hex().lower()
-                db_ph_map[ph_clean] = i
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Ошибка инициализации карты индексов на Шаге 1: {str(e)}")
 
         total_input_amount = 0
         parsed_coins = []
@@ -70,14 +54,23 @@ async def build_spend_bundle(
             p_hash = bytes.fromhex(c_src["puzzle_hash"].replace("0x", ""))
             amt = int(c_src["amount"])
             
+            if "wallet_index" not in item or item["wallet_index"] is None:
+                raise HTTPException(status_code=400, detail="Критическая ошибка: Фронтенд не передал wallet_index для одной из монет!")
+            
             total_input_amount += amt
-            wallet_pk = G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", "")))
-            py_puzzle = puzzle_for_pk(wallet_pk)
+            
+            # 🎯 ЧИСТЫЙ ПАРСИНГ: Создаем G1Element сразу из пришедшего coin_pk_hex без лишних промежуточных переменных
+            py_puzzle = puzzle_for_pk(G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))))
             
             if p_hash.hex().lower() != py_puzzle.get_tree_hash().hex().lower():
                 raise HTTPException(status_code=403, detail="Критическая ошибка: Пузл-хэш монеты не совпадает с ключом!")
                 
-            parsed_coins.append({"coin_obj": Coin(p_info, p_hash, amt), "py_puzzle": py_puzzle, "wallet_pk": wallet_pk})
+            parsed_coins.append({
+                "coin_obj": Coin(p_info, p_hash, amt), 
+                "py_puzzle": py_puzzle, 
+                "coin_pk_hex": item["coin_pk_hex"], # Запоминаем только строковый hex
+                "wallet_index": int(item["wallet_index"])
+            })
             
         if total_input_amount < required:
             raise HTTPException(status_code=400, detail="Недостаточно выбранных монет!")
@@ -102,7 +95,7 @@ async def build_spend_bundle(
         for idx, item in enumerate(parsed_coins):
             coin = item["coin_obj"]
             puzzle = item["py_puzzle"]
-            wallet_pk = item["wallet_pk"]
+            current_wallet_index = item["wallet_index"]
             
             if idx == 0:
                 current_conds = lead_conds
@@ -118,36 +111,18 @@ async def build_spend_bundle(
             msg_hex = (py_sol.rest().first().get_tree_hash() + coin.name() + genesis).hex()
             messages_to_sign.append(msg_hex)
             
-            # 🛡️ ГАРАНТИЯ СОСТОЯТЕЛЬНОСТИ: Если индекс монеты > 500, динамически ищем его до 2000
-            coin_ph_clean = coin.puzzle_hash.hex().lower()
-            current_wallet_index = db_ph_map.get(coin_ph_clean)
-            
-            if current_wallet_index is None:
-                print(f"⚠️ [ИНСПЕКТОР] Puzzle hash {coin_ph_clean[:16]}... не найден в первых 500 индексах. Запуск глубокого поиска...")
-                for deep_idx in range(500, 2000):
-                    deep_sk = master_sk_to_wallet_sk_unhardened(master_sk, deep_idx)
-                    deep_ph = puzzle_for_pk(deep_sk.get_g1()).get_tree_hash().hex().lower()
-                    if deep_ph == coin_ph_clean:
-                        current_wallet_index = deep_idx
-                        db_ph_map[coin_ph_clean] = deep_idx  # кэшируем в карту
-                        print(f"✅ Найдено! Динамический индекс деривации: {deep_idx}")
-                        break
-                
-                # Если даже до 2000 индекса не нашли, выбрасываем явное исключение
-                if current_wallet_index is None:
-                    raise HTTPException(status_code=422, detail=f"Не удалось сопоставить puzzle_hash {coin_ph_clean} с деревом деривации.")
-
-            # 🧠 СИНХРОНИЗАЦИЯ: Вычисляем оффсет на бэке средствами официальной библиотеки Chia
-            offset_int = calculate_synthetic_offset(wallet_pk, DEFAULT_HIDDEN_PUZZLE_HASH)
-            
-            # 🔥 ИСПРАВЛЕНИЕ: Переводим скаляр типа int строго в 32 байта (Big-Endian) перед вызовом .hex()
+            # 🎯 ТУТ ТОЖЕ ЧИСТО: Передаем распарсенный на лету G1Element прямо внутрь калькулятора оффсета Chia
+            offset_int = calculate_synthetic_offset(
+                G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))), 
+                DEFAULT_HIDDEN_PUZZLE_HASH
+            )
             offset_bytes = offset_int.to_bytes(32, byteorder="big")
             synthetic_offset_hex = offset_bytes.hex()
 
             coin_spends_json_list.append({
                 "wallet_index": current_wallet_index, 
                 "message_to_sign_hex": msg_hex,
-                "synthetic_offset_hex": synthetic_offset_hex,  # 🔥 Улетает чистый hex сдвига
+                "synthetic_offset_hex": synthetic_offset_hex,
                 "coin": {
                     "parent_coin_info": "0x" + coin.parent_coin_info.hex(), 
                     "puzzle_hash": "0x" + coin.puzzle_hash.hex(), 
@@ -160,13 +135,9 @@ async def build_spend_bundle(
         final_integrity_token = generate_multi_integrity_token(messages_to_sign, coin_spends_json_list)
 
         print("\n==============================================================")
-        print("📤 [БЭКЕНД ИНСПЕКТОР] ОТПРАВЛЯЕМ ОБНОВЛЕННЫЕ ДАННЫЕ НА ФРОНТЕНД")
+        print("📤 [ПРОДАКШН БИЛДЕР] ОТПРАВЛЯЕМ НЕКОСТОДИАЛЬНЫЕ ДАННЫЕ НА ФРОНТ")
         print("==============================================================")
         print(f"• Подготовлено спендов монет (coin_spends): {len(coin_spends_json_list)}")
-        for idx, cs in enumerate(coin_spends_json_list):
-            c = cs["coin"]
-            print(f"  [{idx}] Coin Spend: Index={cs['wallet_index']}, Offset={cs['synthetic_offset_hex'][:16]}..., Msg={cs['message_to_sign_hex'][:16]}...")
-            
         print("==============================================================\n")
             
         return {

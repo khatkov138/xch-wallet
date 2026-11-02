@@ -153,7 +153,7 @@ export function useSendTransaction({
   })
 
 
-const sendTxMutation = useMutation({
+  const sendTxMutation = useMutation({
     mutationFn: async () => {
       // КРИТИЧЕСКИЙ ЧЕК: Теперь проверяем наличие самого массива спендов, ПИН-кода и снапшота
       if (!preparedSpendData?.coin_spends || !pin || !localSnapshot) {
@@ -244,7 +244,7 @@ const sendTxMutation = useMutation({
                 mnemonic: clearMnemonic,
                 walletIndex: Number(currentWalletIndex),
                 messageHex: msgHex,
-                syntheticOffsetHex: item.synthetic_offset_hex, 
+                syntheticOffsetHex: item.synthetic_offset_hex,
               });
 
               console.log(`     ✅ Подпись сгенерирована: ${resultSig.substring(0, 32)}...`);
@@ -270,6 +270,7 @@ const sendTxMutation = useMutation({
 
       const cleanCoinSpends = coinSpendsList.map((cs: any) => ({
         wallet_index: cs.wallet_index,
+        synthetic_offset_hex: cs.synthetic_offset_hex, // 🔥 ДОБАВЛЯЕМ СЮДА ПРОБРОС ОФФСЕТА!
         coin: {
           parent_coin_info: cs.coin.parent_coin_info,
           puzzle_hash: cs.coin.puzzle_hash,
