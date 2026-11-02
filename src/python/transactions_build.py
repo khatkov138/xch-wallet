@@ -59,7 +59,7 @@ async def build_spend_bundle(
             
             total_input_amount += amt
             
-            # 🎯 ЧИСТЫЙ ПАРСИНГ: Создаем G1Element сразу из пришедшего coin_pk_hex без лишних промежуточных переменных
+            # 🎯 ЧИСТЫЙ ПАРСИНГ
             py_puzzle = puzzle_for_pk(G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))))
             
             if p_hash.hex().lower() != py_puzzle.get_tree_hash().hex().lower():
@@ -68,7 +68,7 @@ async def build_spend_bundle(
             parsed_coins.append({
                 "coin_obj": Coin(p_info, p_hash, amt), 
                 "py_puzzle": py_puzzle, 
-                "coin_pk_hex": item["coin_pk_hex"], # Запоминаем только строковый hex
+                "coin_pk_hex": item["coin_pk_hex"], 
                 "wallet_index": int(item["wallet_index"])
             })
             
@@ -111,7 +111,6 @@ async def build_spend_bundle(
             msg_hex = (py_sol.rest().first().get_tree_hash() + coin.name() + genesis).hex()
             messages_to_sign.append(msg_hex)
             
-            # 🎯 ТУТ ТОЖЕ ЧИСТО: Передаем распарсенный на лету G1Element прямо внутрь калькулятора оффсета Chia
             offset_int = calculate_synthetic_offset(
                 G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))), 
                 DEFAULT_HIDDEN_PUZZLE_HASH
@@ -140,12 +139,41 @@ async def build_spend_bundle(
         print(f"• Подготовлено спендов монет (coin_spends): {len(coin_spends_json_list)}")
         print("==============================================================\n")
             
+        # 🎯 СОБИРАЕМ АУДИТОРСКУЮ ИНФОРМАЦИЮ БЕЗ ИЗМЕНЕНИЯ ОРИГИНАЛЬНОЙ ТРАНЗАКЦИИ
+        audit_info = {
+            "summary": {
+                "total_inputs_mojo": total_input_amount,
+                "total_outputs_mojo": total_input_amount,
+                "fee_network_mojo": fee_mojos,
+                "is_dust_split_applied": False  # В текущем базовом билдере сплит выключен
+            },
+            "disposition": {
+                "target": {
+                    "address": send_to_address,
+                    "puzzle_hash": "0x" + decode_puzzle_hash(send_to_address).hex(),
+                    "amount_mojo": mojos_to_send
+                },
+                "standard_change": {
+                    "wallet_index": parsed_coins[0]["wallet_index"],
+                    "puzzle_hash": "0x" + lead_puzzle.get_tree_hash().hex(),
+                    "amount_mojo": change_amount
+                },
+                "dust_split": {
+                    "amount_per_address_mojo": 0,
+                    "total_addresses_funded": 0,
+                    "funded_indexes": []
+                }
+            }
+        }
+
         return {
             "success": True, 
             "integrity_token": final_integrity_token, 
             "coin_spends": coin_spends_json_list, 
             "verified_target_address": send_to_address, 
-            "verified_mojos_to_send": mojos_to_send
+            "verified_mojos_to_send": mojos_to_send,
+            # 🎯 НОВОЕ ДОПОЛНИТЕЛЬНОЕ ПОЛЕ
+            "audit_info": audit_info
         }
     except HTTPException as h: raise h
     except Exception as e: raise HTTPException(status_code=500, detail=str(e))
