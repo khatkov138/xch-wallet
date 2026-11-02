@@ -133,7 +133,7 @@ export function GeneratePhraseForm({ onSubmit }: GeneratePhraseFormProps) {
       </Button>
 
       {/* Скрытый печатный бланк бумажного кошелька */}
-      <PapperWalletPrintout mnemonic={generatedPhrase} walletAddress="" />
+      <PapperWalletPrintout mnemonic={generatedPhrase} />
     </div>
   )
 }
