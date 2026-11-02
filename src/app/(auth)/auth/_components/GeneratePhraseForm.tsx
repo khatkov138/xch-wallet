@@ -6,8 +6,9 @@ import * as bip39 from "bip39"
 
 
 
-import { PapperWalletPrintout } from "@/app/(dashboard)/dashboard/_components/PapperWalletPrintout"
+
 import { Button } from "@/components/ui/button"
+import { PapperWalletPrintout } from "@/components/PapperWalletPrintout"
 
 interface GeneratePhraseFormProps {
   onSubmit: (phrase: string) => void

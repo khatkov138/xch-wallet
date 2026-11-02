@@ -16,6 +16,7 @@ import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
 import { UnlockPinForm } from "./UnlockPinForm"
 import { useIdleTimer } from "@/hooks/useIdleTimer"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard" // Единый корневой хук
+import { BackupCard } from "./_components/BackupCard"
 
 export default function DashboardClient() {
   const router = useRouter()
@@ -83,6 +84,7 @@ export default function DashboardClient() {
           <AddressCard />
           <ActionButtons onReceiveClick={() => setIsReceiveOpen(true)} onSendClick={() => setIsSendOpen(true)} />
           <ActivityList />
+          <BackupCard/>
         </div>
       </WalletLayout>
 
