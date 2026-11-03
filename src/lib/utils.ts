@@ -25,3 +25,25 @@ export async function handleApi<T>(promise: Promise<Response>): Promise<T> {
   // Возвращаем чистые данные
   return json.data as T;
 }
+
+/**
+ * Преобразует Mojo (string | number | bigint) в строковое представление XCH (до 12 знаков).
+ * Без JS плавающей точки, без лишних нулей на конце. Гарантирует Layout Stability.
+ */
+export function formatMojoToXchString(mojoInput: string | number | bigint | undefined | null): string {
+  if (mojoInput === undefined || mojoInput === null) return "0 XCH"
+  
+  const mojoObj = BigInt(mojoInput)
+  if (mojoObj === 0n) return "0 XCH"
+
+  const sign = mojoObj < 0n ? "-" : ""
+  const absoluteMojo = mojoObj < 0n ? -mojoObj : mojoObj
+
+  const mojoStr = absoluteMojo.toString().padStart(13, '0')
+  const integerPart = mojoStr.slice(0, -12)
+  const fractionalPart = mojoStr.slice(-12).replace(/0+$/, "")
+
+  const result = fractionalPart ? `${integerPart}.${fractionalPart}` : integerPart
+  return `${sign}${result} XCH`
+}
+

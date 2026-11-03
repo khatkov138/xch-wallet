@@ -3,6 +3,7 @@
 import React from "react"
 import { TrendingDown, ShieldCheck, Zap } from "lucide-react"
 import { useSendModalContext } from "./SendModalContext"
+import { formatMojoToXchString } from "@/lib/utils"
 
 export function SendStepOne() {
   const {
@@ -22,24 +23,37 @@ export function SendStepOne() {
   
   const btnConfig = [
     { t: "low", l: "Низкая", icon: TrendingDown, cl: "text-zinc-400" },
-    { t: "medium", l: "Средняя 🔥", icon: ShieldCheck, cl: "text-amber-500" },
-    { t: "high", l: "Высокая 🚀", icon: Zap, cl: "text-[#FF2E93]" }
+    { t: "medium", l: "Средняя", icon: ShieldCheck, cl: "text-amber-500" },
+    { t: "high", l: "Высокая", icon: Zap, cl: "text-[#FF2E93]" }
   ] as const
 
   const fullBalance = realXCHStr || "0.0000"
+  const numericBalance = parseFloat(fullBalance)
 
-  // Хелпер динамической точности: вытягивает 7+ знаки для микро-комиссий без раздувания верстки
-  const formatButtonFee = (mojo: number) => {
-    if (mojo === 0) return "0 XCH"
-    const xch = mojo / 1e12
+  // Конфиг долей: 10%, 50%, 100%
+  const percentPresets = [
+    { label: "10%", pct: 0.1 },
+    { label: "50%", pct: 0.5 },
+    { label: "100%", pct: 1.0 }
+  ] as const
+
+  // Синхронный хелпер округления для текста на кнопках
+  const getPresetLabel = (pct: number): string => {
+    if (!numericBalance || numericBalance <= 0) return "0.000 XCH"
+    if (pct === 1.0) return `${numericBalance.toFixed(3)} XCH`
+    return `${(numericBalance * pct).toFixed(3)} XCH`
+  }
+
+  // Обработчик клика по пресетам с округлением до 3 знаков (для 100% отдает полный strict-баланс)
+  const handlePercentClick = (pct: number) => {
+    if (!realXCHStr || numericBalance <= 0) return
     
-    // Если цифры уходят глубже 6-го знака, даем полную точность до значащего символа
-    if (xch < 0.000001) {
-      return `${xch.toFixed(12).replace(/\.?0+$/, "")} XCH`
+    if (pct === 1.0) {
+      setAmount(realXCHStr)
+    } else {
+      const rounded = (numericBalance * pct).toFixed(3)
+      setAmount(rounded)
     }
-    
-    // Для стандартных комиссий держим компактный и аккуратный вид
-    return `${xch.toFixed(6)} XCH`
   }
 
   return (
@@ -63,7 +77,7 @@ export function SendStepOne() {
         />
       </div>
       
-      {/* Инпут суммы с балансом сверху и кастомной кнопкой MAX */}
+      {/* Инпут суммы */}
       <div>
         <div className="flex justify-between items-center mb-1.5 select-none">
           <label className="block text-xs font-semibold text-zinc-400">Сумма (XCH)</label>
@@ -89,12 +103,11 @@ export function SendStepOne() {
             required 
           />
           
-          {/* КНОПКА MAX БЕЗ АНИМАЦИЙ */}
           <button
             type="button"
             disabled={loading}
             onClick={() => {
-              if (realXCHStr && parseFloat(realXCHStr) > 0) {
+              if (realXCHStr && numericBalance > 0) {
                 setAmount(realXCHStr)
               }
             }}
@@ -102,6 +115,28 @@ export function SendStepOne() {
           >
             MAX
           </button>
+        </div>
+
+        {/* КНОПКИ ПРЕСЕТОВ: 10% | 50% | 100% */}
+        <div className="flex gap-2 mt-2 select-none">
+          {percentPresets.map(({ label, pct }, idx) => {
+            const isAvailable = numericBalance > 0
+            return (
+              <button
+                key={idx}
+                type="button"
+                disabled={loading || !isAvailable}
+                onClick={() => handlePercentClick(pct)}
+                className={`flex-1 py-1.5 rounded-lg border text-center font-mono text-[10px] font-black tracking-wider transition-all ${
+                  isAvailable
+                    ? "bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-white cursor-pointer active:scale-95"
+                    : "bg-zinc-950 border-zinc-900 text-zinc-600 opacity-40 cursor-not-allowed"
+                }`}
+              >
+                {getPresetLabel(pct)}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -132,9 +167,8 @@ export function SendStepOne() {
                 <Icon size={13} className={selectedTier === t && hasData ? cl : "text-zinc-600"} />
                 <span className="text-[11px] font-black mt-1">{l}</span>
                 
-                {/* 🎯 ФИКС: Динамическая маска вытащит 7-й и 8-й знаки. whitespace-nowrap держит сетку. */}
                 <span className="text-[9px] text-zinc-400 font-mono mt-0.5 whitespace-nowrap">
-                  {hasData ? formatButtonFee(mojoVal) : "Загрузка..."}
+                  {hasData ? formatMojoToXchString(mojoVal) : "Загрузка..."}
                 </span>
                 
                 <span className="text-[8px] text-zinc-500 font-medium mt-0.5">
