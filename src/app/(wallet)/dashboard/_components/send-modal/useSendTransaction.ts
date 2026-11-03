@@ -200,11 +200,11 @@ export function useSendTransaction({
         throw new Error("Критическая ошибка: Итоговая сумма списания изменена бэкендом или перехвачена!")
       }
 
-      // 🎯 ЗАЩИТА СЛИППИДЖА (90%): Получатель должен получить не менее 90% от исходного инпута
-      const minimumAllowedMojo = localSnapshot.mojosToSend * 0.9
+      // 🎯 ЗАЩИТА СЛИППИДЖА (70%): Получатель должен получить не менее 70% от исходного инпута
+      const minimumAllowedMojo = localSnapshot.mojosToSend * 0.7
       if (backendTargetMojo < minimumAllowedMojo) {
         console.error(`❌ АТАКА НА КОМИССИИ: Получателю долетает слишком мало! Назначено: ${backendTargetMojo}, Минимум: ${minimumAllowedMojo}`)
-        throw new Error("Критическая ошибка: Суммарные комиссии превышили порог в 10% от суммы отправки!")
+        throw new Error("Критическая ошибка: Суммарные комиссии превышили порог в 30% от суммы отправки!")
       }
       console.log("💪 Снапшот-аудит и защита от проскальзывания пройдены успешно!")
       // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ С АБСОЛЮТНОЙ СИНХРОНИЗАЦИЕЙ ИНДЕКСОВ CHIA
