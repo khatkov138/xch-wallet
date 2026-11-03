@@ -13,10 +13,15 @@ export interface CalculatedFees {
   low: FeeOption;
 }
 
+// Изменено: Строгое соответствие новому JSON с бэкенда
 interface RawFeesResponse {
   success: boolean;
-  estimates: number[];
   cost: number;
+  tariffs: {
+    high: { raw_estimate: number; seconds: number };
+    medium: { raw_estimate: number; seconds: number };
+    low: { raw_estimate: number; seconds: number };
+  };
 }
 
 const FEES_QUERY_KEY = ['chiaNodeFeesEstimate'];
@@ -26,49 +31,52 @@ export function useWalletFees(isEnabled: boolean = false, coinSpendsCount: numbe
     queryKey: FEES_QUERY_KEY,
     queryFn: async () => {
       const res = await fetch('/api/v1/node/fees');
-      
+
       if (!res.ok) {
         throw new Error('Failed to fetch node fee estimates from proxy');
       }
-      
+
       return res.json();
     },
     enabled: isEnabled,
-    staleTime: 15000, 
+    staleTime: 15000,
     gcTime: 60000,
     select: (rawResponse) => {
-      const estimates = rawResponse.estimates || [];
+      // Защита на случай пустых данных
+      const tariffs = rawResponse.tariffs || {
+        high: { raw_estimate: 0, seconds: 60 },
+        medium: { raw_estimate: 0, seconds: 300 },
+        low: { raw_estimate: 0, seconds: 600 }
+      };
       const responseBlockCost = rawResponse.cost || 18000000;
 
-      // 1. Динамический расчет реального веса транзакции в CLVM байтах
-      const BASE_COST = 5000;
-      const COST_PER_SPEND = 11000;
-      const actualTxCost = BASE_COST + (coinSpendsCount * COST_PER_SPEND);
+      // 1. Честный расчет реального CLVM-веса транзакции Chia (Инпуты, аутпуты и подписи)
+      const CLVM_BASE_TX_COST = 5000;       
+      const CLVM_COST_PER_INPUT = 11000;    
+      const CLVM_COST_PER_OUTPUT = 1800000; 
+      const CLVM_COST_AGG_SIG = 1200000;    
 
-      // 2. Демасштабирование: переводим рейты из "за целый блок" в базовый коэффициент "Mojo за 1 Cost"
-      const highRate = (estimates[0] || 0) / responseBlockCost;
-      const mediumRate = (estimates[1] || 0) / responseBlockCost;
-      const lowRate = (estimates[2] || 0) / responseBlockCost;
+      const actualTxCost =
+        CLVM_BASE_TX_COST +
+        (coinSpendsCount * CLVM_COST_PER_INPUT) +
+        (2 * CLVM_COST_PER_OUTPUT) +
+        CLVM_COST_AGG_SIG;
 
-      // 3. Расчет адаптивной минимальной подушки безопасности (Mojo) под реальный вес
-      const baseLow = 1 * actualTxCost;
-      const baseMedium = 5 * actualTxCost;
-      const baseHigh = 15 * actualTxCost;
+      // 2. Универсальный внутренний хелпер маппинга без хардкода секунд
+      const processTariff = (rawEstimate: number, baseMultiplier: number, seconds: number) => {
+        const rate = (rawEstimate || 0) / responseBlockCost;
+        const basePadding = baseMultiplier * actualTxCost;
+        return {
+          mojo: Math.max(Math.round(rate * actualTxCost), basePadding),
+          seconds // Секунды прокидываются напрямую из ответа бэкенда
+        };
+      };
 
-      // 4. Финальное масштабирование рыночной комиссии под вес транзакции с защитой от просадок
+      // 3. Расчет тарифов с адаптивной подушкой безопасности
       return {
-        high: { 
-          mojo: Math.max(Math.round(highRate * actualTxCost), baseHigh), 
-          seconds: 60 
-        },
-        medium: { 
-          mojo: Math.max(Math.round(mediumRate * actualTxCost), baseMedium), 
-          seconds: 300 
-        },
-        low: { 
-          mojo: Math.max(Math.round(lowRate * actualTxCost), baseLow), 
-          seconds: 600 
-        }
+        high: processTariff(tariffs.high.raw_estimate, 15, tariffs.high.seconds),
+        medium: processTariff(tariffs.medium.raw_estimate, 5, tariffs.medium.seconds),
+        low: processTariff(tariffs.low.raw_estimate, 1, tariffs.low.seconds)
       };
     }
   });
