@@ -1,14 +1,22 @@
 import os
+import sys
+from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
-# 🎯 Импорт твоих новых разнесенных роутеров транзакций
+# 🎯 ГАРАНТИРУЕМ ИЗОЛЯЦИЮ ПУТЕЙ ДЛЯ WINDOWS И UVICORN MULTIPROCESSING
+current_dir = Path(__file__).resolve().parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
+# 🚀 Чистые атомарные импорты из твоих файлов
 from wallets import wallet_router
 from node import router as node_router
 from transactions_build import tx_router as tx_build_router
 from transactions_send import tx_router as tx_send_router
 from transactions_track import transactions_track_router
+from addresses_track import addresses_router
 
 app = FastAPI(title="Chia Custom API Backend", version="1.0.0")
 
@@ -50,15 +58,20 @@ def ping():
 app.include_router(wallet_router)
 app.include_router(node_router)
 
-# 🎯 Подключаем новые роутеры транзакций (они заменяют старый transactions.py)
+# Подключаем роутеры транзакций
 app.include_router(tx_build_router)
 app.include_router(tx_send_router)
 app.include_router(transactions_track_router)
+
+# 🎯 Подключаем твой новый роутер трекера адресов
+app.include_router(addresses_router)
+
 if __name__ == "__main__":
     uvicorn.run(
-        "server:app",  # Запуск файла server.py и экземпляра приложения app
-        host="127.0.0.1", # Слушаем только локальный интерфейс
-        port=8000, # Внутренний порт бэкенда
+        "server:app",  
+        host="127.0.0.1", 
+        port=8000, 
         reload=True,
+        app_dir=str(current_dir),  # Жестко прописывает Uvicorn рабочую директорию, убирая ModuleNotFoundError
         reload_dirs=["src/python"]
     )

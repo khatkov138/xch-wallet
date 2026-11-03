@@ -13,11 +13,8 @@ async def track_transaction(
     target_coin_id: str = Query(..., alias="targetCoinId")
 ):
     """
-    Высокоточный атомарный трекер транзакций Chia.
-    
-    1. Ищет транзакцию в мемпуле по tx_id (пока она в очереди).
-    2. Если в мемпуле пусто (блок запекается) — мгновенно проверяет факт 
-       появления созданного коина в блокчейне через /get_coin_record_by_name.
+    Высокоточный атомарный трекер транзакций Chia с расширенными Spacescan-метриками
+    и автоматическим поиском puzzle_hash отправителя (From).
     """
     try:
         clean_tx_id = clean_hash(tx_id)
@@ -31,7 +28,7 @@ async def track_transaction(
         
         cert, key = get_ssl_credentials()
 
-        async with httpx.AsyncClient(verify=False, cert=(cert, key), timeout=4.0) as client:
+        async with httpx.AsyncClient(verify=False, cert=(cert, key), timeout=5.0) as client:
             
             # 🚀 ФАЗА 1: Проверка эфемерного мемпула ноды Chia
             mempool_res = await client.post(
@@ -48,7 +45,11 @@ async def track_transaction(
                         "tx_id": f"0x{clean_tx_id}",
                         "status": "IN_MEMPOOL",
                         "fee_mojo": int(m_item.get("fee", 0)),
-                        "block_height": None
+                        "block_height": None,
+                        "amount_mojo": None,
+                        "puzzle_hash": None,
+                        "parent_puzzle_hash": None,
+                        "timestamp": None
                     }
 
             # ⛓️ ФАЗА 2: Проверка появления созданного коина в реестре ноды
@@ -62,22 +63,43 @@ async def track_transaction(
                 if coin_data.get("success") and coin_data.get("coin_record"):
                     record = coin_data["coin_record"]
                     
-                    # ИСТИННЫЙ ИНВАРИАНТ УСПЕХА: Если монета подтверждена в блокчейне
                     confirmed_height = record.get("confirmed_block_index", 0)
                     if confirmed_height > 0:
+                        coin_details = record.get("coin", {})
+                        parent_coin_id = coin_details.get("parent_coin_info", "")
+                        
+                        # 🎯 АТОМАРНЫЙ ЗАПРОС К РОДИТЕЛЬСКОЙ МОНЕТЕ: Узнаем puzzle_hash отправителя
+                        parent_puzzle_hash = ""
+                        if parent_coin_id:
+                            parent_res = await client.post(
+                                f"{BASE_RPC_URL}/get_coin_record_by_name",
+                                json={"name": clean_hash(parent_coin_id)}
+                            )
+                            if parent_res.status_code == 200:
+                                parent_data = parent_res.json()
+                                if parent_data.get("success") and parent_data.get("coin_record"):
+                                    parent_puzzle_hash = parent_data["coin_record"].get("coin", {}).get("puzzle_hash", "")
+
                         return {
                             "success": True,
                             "tx_id": f"0x{clean_tx_id}",
                             "status": "CONFIRMED",
-                            "block_height": confirmed_height
+                            "block_height": confirmed_height,
+                            "amount_mojo": coin_details.get("amount", 0),
+                            "puzzle_hash": coin_details.get("puzzle_hash", ""),
+                            "parent_puzzle_hash": parent_puzzle_hash,  # Отдаем фронту для декодирования адреса
+                            "timestamp": record.get("timestamp", None)
                         }
 
-            # 🕳️ ФАЗА 3: Фолбек (Если транзакции нет в мемпуле и коин не создан -> отказ ноды)
             return {
                 "success": False,
                 "tx_id": f"0x{clean_tx_id}",
                 "status": "NOT_FOUND",
-                "block_height": None
+                "block_height": None,
+                "amount_mojo": None,
+                "puzzle_hash": None,
+                "parent_puzzle_hash": None,
+                "timestamp": None
             }
 
     except httpx.HTTPError as he:
