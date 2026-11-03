@@ -123,13 +123,7 @@ export default function StatusPage() {
 
             {/* Карточка синхронизации */}
             <SyncCard
-              network={nodeData.network}
-              isSynced={nodeData.isSynced}
-              isSyncingMode={nodeData.isSyncingMode}
-              currentHeight={nodeData.currentHeight}
-              targetHeight={nodeData.targetHeight}
-              progressPercent={nodeData.progressPercent}
-              estimatedTimeLeft={estimatedTimeLeft}
+           
             />
 
             {/* Сетка метрик скорости и пиров */}

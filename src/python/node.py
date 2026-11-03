@@ -1,56 +1,82 @@
 import os
 import asyncio
 import httpx
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
+from shared import get_ssl_credentials, BASE_RPC_URL
 
 router = APIRouter(prefix="/api/v1/node", tags=["Node Info"])
-BASE_RPC_URL = "https://localhost:8555"
 
-def get_mainnet_ssl():
-    home = Path.home()
-    p = home / ".chia/mainnet/config/ssl/full_node"
-    crt, key = p / "private_full_node.crt", p / "private_full_node.key"
-    
-    if not crt.exists() or not key.exists():
-        p = Path("C:/Users/khatk/.chia/mainnet/config/ssl/full_node")
-        crt, key = p / "private_full_node.crt", p / "private_full_node.key"
-        
-    if not crt.exists() or not key.exists():
-        # Если нет сертификатов — это проблема конфигурации ноды, отдаем 503
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
-            detail="SSL-сертификаты Full Node отсутствуют в папке mainnet."
-        )
-    return str(crt), str(key)
 
 @router.get("/status")
 async def get_node_status():
     try:
-        crt, key = get_mainnet_ssl()
+        crt, key = get_ssl_credentials()
         
-        async def fetch_rpc(client: httpx.AsyncClient, endpoint: str) -> dict:
+        async def fetch_rpc(client: httpx.AsyncClient, endpoint: str, payload: dict = None) -> dict:
             try:
-                res = await client.post(f"{BASE_RPC_URL}/{endpoint}", json={})
+                res = await client.post(f"{BASE_RPC_URL}/{endpoint}", json=payload or {})
                 data = res.json()
                 if not data.get("success"):
-                    # Нода ответила, но вернула внутреннюю ошибку (например, NO_TRANSACTIONS_WHILE_SYNCING)
-                    raise HTTPException(status_code=503, detail=f"Chia RPC {endpoint} returned success: false")
+                    raise HTTPException(
+                        status_code=503, 
+                        detail=f"Chia RPC {endpoint} returned success: false"
+                    )
                 return data
             except (httpx.HTTPError, ValueError):
-                # Нода вообще не отвечает на запросы (служба отключена)
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE, 
                     detail=f"Служба блокчейна недоступна. Нет ответа от RPC {endpoint}."
                 )
 
+        # Всё строго в секундах: 60с, 300с, 600с
+        target_times = [60, 300, 600]
+        tx_cost = 18000000  # Базовая стоимость CLVM cost для транзакции отправки XCH
+
         async with httpx.AsyncClient(verify=False, cert=(crt, key), timeout=4.0) as client:
-            net_data, state_data, conn_data = await asyncio.gather(
-                fetch_rpc(client, "get_network_info"),
-                fetch_rpc(client, "get_blockchain_state"),
-                fetch_rpc(client, "get_connections")
-            )
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    net_task = tg.create_task(fetch_rpc(client, "get_network_info"))
+                    state_task = tg.create_task(fetch_rpc(client, "get_blockchain_state"))
+                    conn_task = tg.create_task(fetch_rpc(client, "get_connections"))
+                    
+                    fee_task = tg.create_task(fetch_rpc(client, "get_fee_estimate", {
+                        "target_times": target_times,
+                        "cost": tx_cost
+                    }))
+                
+                net_data = net_task.result()
+                state_data = state_task.result()
+                conn_data = conn_task.result()
+                fee_data = fee_task.result()
+                
+            except Exception as e:
+                # 🎯 ЖЕЛЕЗНЫЙ ФИКС ДЛЯ FASTAPI: Распаковываем ExceptionGroup вручную
+                # Если упал TaskGroup, Python завернет ошибку в BaseExceptionGroup
+                if hasattr(e, "exceptions") and e.exceptions:
+                    for sub_e in e.exceptions:
+                        if isinstance(sub_e, HTTPException):
+                            raise sub_e
+                # Если это одиночный HTTPException — бросаем его напрямую
+                if isinstance(e, HTTPException):
+                    raise e
+                # Любую другую системную ошибку оборачиваем в чистый 503
+                raise HTTPException(status_code=503, detail=f"Ошибка сети блокчейна: {str(e)}")
+
+        estimates = fee_data.get("estimates", [0, 0, 0])
+        
+        # Гарантированные пороги безопасности (минимальные моджи на единицу cost при пустом мемпуле)
+        base_low = 1 * tx_cost
+        base_medium = 5 * tx_cost
+        base_high = 15 * tx_cost
+
+        # Выводим секунды ("seconds") напрямую
+        fee_options = {
+            "high": {"mojo": int(max(estimates[0], base_high)), "seconds": 60},
+            "medium": {"mojo": int(max(estimates[1], base_medium)), "seconds": 300},
+            "low": {"mojo": int(max(estimates[2], base_low)), "seconds": 600}
+        }
 
         state = state_data["blockchain_state"]
         sync = state["sync"]
@@ -68,7 +94,7 @@ async def get_node_status():
 
         ts = peak.get("timestamp") if peak else None
         peak_time = (
-            datetime.utcfromtimestamp(ts).isoformat() + "Z"
+            datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
             if ts is not None and ts > 0 else None
         )
 
@@ -87,6 +113,7 @@ async def get_node_status():
                 "networkSpaceTib": str(state.get("space") or 0),
                 "peakTime": peak_time,
                 "totalPeers": int(len(full_node_conns)),
+                "dynamicFees": fee_options,
                 "peersList": [
                     {
                         "ip": str(c["peer_host"]),
@@ -100,5 +127,4 @@ async def get_node_status():
     except HTTPException as he: 
         raise he
     except Exception as e: 
-        # Любые другие непредвиденные ошибки бэкенда тоже заворачиваем в 503 статус для RPC
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))

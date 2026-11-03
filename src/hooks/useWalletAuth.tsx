@@ -2,7 +2,7 @@
 
 import { useCallback } from "react"
 import { useSecureStorage, useWalletSession } from "@/store/useWalletStore"
-import { decryptMnemonic, deriveMasterPublicKey } from "@/lib/utils/crypto"
+import { decryptMnemonic, deriveMasterPublicKey, encryptMnemonic } from "@/lib/utils/crypto"
 
 const SESSION_TIMEOUT = 15 * 60 * 1000 // 15 минут
 
@@ -13,16 +13,16 @@ export function useWalletAuth() {
   const setVerifying = useWalletSession((state) => state.setVerifying)
   const setScreenLocked = useWalletSession((state) => state.setScreenLocked)
 
-  const deleteWallet = useSecureStorage((state) => state.deleteWallet)
+  const vault = useSecureStorage()
 
   const endSession = useCallback(() => {
     endSessionFromStore()
   }, [endSessionFromStore])
 
   const hardResetWallet = useCallback(() => {
-    deleteWallet()
+    vault.deleteWallet()
     endSessionFromStore()
-  }, [deleteWallet, endSessionFromStore])
+  }, [endSessionFromStore])
 
   const loginWithClearMnemonic = useCallback(async (clearMnemonic: string) => {
     try {
@@ -35,27 +35,73 @@ export function useWalletAuth() {
   }, [startSession, setVerifying])
 
   /**
-   * 🛡️ МЕТОД 1: Только для разблокировки экрана приложения
+   * 🛡️ НОВЫЙ МЕТОД: Создание и шифрование кошелька с жесткой очисткой памяти
    */
-  const unlockWithPin = useCallback(async (pinCode: string): Promise<boolean> => {
+  const createNewWallet = useCallback(async (rawPhrase: string, pinCode: string): Promise<void> => {
     setVerifying(true)
+    
+    // Создаем изменяемые ссылки для возможности их очистки в finally
+    let cleanPhrase: string | null = rawPhrase.trim().toLowerCase().replace(/\s+/g, " ")
+    let pubKey: string | null = null
+    let encryptedData: any = null
+
     try {
-      const { hasWallet: diskHasWallet, encryptedMnemonic } = useSecureStorage.getState()
-      if (!diskHasWallet || !encryptedMnemonic) throw new Error("WALLET_NOT_FOUND")
+      const wordsCount = cleanPhrase.split(" ").filter(Boolean).length
 
-      const clearMnemonic = await decryptMnemonic(encryptedMnemonic, pinCode)
-      const pubKey = await deriveMasterPublicKey(clearMnemonic)
+      // Поддерживаем стандарты Chia (12 или 24 слова)
+      if (wordsCount !== 24 && wordsCount !== 12) {
+        throw new Error("Фраза повреждена: должно быть 12 или 24 слова")
+      }
 
+      // 1. Криптографическое шифрование
+      encryptedData = await encryptMnemonic(cleanPhrase, pinCode)
+
+      // 2. Сохраняем на диск зашифрованный вольт
+      vault.saveEncryptedMnemonic(encryptedData)
+
+      // 3. Получаем публичный ключ для сессии
+      pubKey = await deriveMasterPublicKey(cleanPhrase)
+
+      // 4. Поднимаем сессию в RAM
       startSession(pubKey, SESSION_TIMEOUT)
-      return true
+
+    } catch (error) {
+      console.error("❌ Ошибка при создании кошелька:", error)
+      throw error
     } finally {
+      // 🔥 ЖЕСТКАЯ ОЧИСТКА ПАМЯТИ: Стираем любые упоминания сырой фразы
+      cleanPhrase = null
+      pubKey = null
+      encryptedData = null
       setVerifying(false)
     }
   }, [startSession, setVerifying])
 
   /**
-   * 🔐 МЕТОД 2: Изолированное получение фразы для подписи транзакций
-   * Не дергает глобальные лоадеры, не вызывает побочных эффектов на Дашборде
+   * 🔓 Разблокировка экрана приложения
+   */
+  const unlockWithPin = useCallback(async (pinCode: string): Promise<boolean> => {
+    setVerifying(true)
+    let clearMnemonic: string | null = null
+    let pubKey: string | null = null
+    try {
+      const { hasWallet: diskHasWallet, encryptedMnemonic } = useSecureStorage.getState()
+      if (!diskHasWallet || !encryptedMnemonic) throw new Error("WALLET_NOT_FOUND")
+
+      clearMnemonic = await decryptMnemonic(encryptedMnemonic, pinCode)
+      pubKey = await deriveMasterPublicKey(clearMnemonic)
+
+      startSession(pubKey, SESSION_TIMEOUT)
+      return true
+    } finally {
+      clearMnemonic = null
+      pubKey = null
+      setVerifying(false)
+    }
+  }, [startSession, setVerifying])
+
+  /**
+   * 🔐 Изолированное получение фразы для подписи транзакций
    */
   const getMnemonicForSigning = useCallback(async (pinCode: string): Promise<string> => {
     const { hasWallet: diskHasWallet, encryptedMnemonic } = useSecureStorage.getState()
@@ -64,6 +110,9 @@ export function useWalletAuth() {
     return await decryptMnemonic(encryptedMnemonic, pinCode)
   }, [])
 
+  /**
+   * 🕒 Проверка состояния сессии при инициализации
+   */
   const checkInitialState = useCallback(() => {
     const { hasWallet: diskHasWallet } = useSecureStorage.getState()
     const { unhardenedPkHex: activePkHex, expiresAt } = useWalletSession.getState()
@@ -80,8 +129,9 @@ export function useWalletAuth() {
       return "NEED_UNLOCK"
     }
 
-    if (Date.now() > expiresAt + 2000) {
+    if (Date.now() > expiresAt) {
       endSessionFromStore()
+      setScreenLocked(true)
       return "NEED_UNLOCK"
     }
 
@@ -92,8 +142,9 @@ export function useWalletAuth() {
 
   return {
     loginWithClearMnemonic,
+    createNewWallet, // Экспортируем новый метод
     unlockWithPin,
-    getMnemonicForSigning, // Новый чистый метод
+    getMnemonicForSigning,
     checkInitialState,
     endSession,
     hardResetWallet,
