@@ -1,121 +1,140 @@
 'use client'
 
-import React, { use, Suspense } from "react"
+import React, { Suspense } from "react"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
-import { handleApi } from "@/lib/utils"
-import { ArrowLeft, Clock, Layers } from "lucide-react"
-import Link from "next/link"
+import { ChevronLeft, Clock, ShieldCheck, Box } from "lucide-react"
+import { Card, CardContent } from "@/components/ui/card"
 
-interface CoinDetails {
-  coinId: string;
-  amountXch: string;
-  puzzleHash: string;
-  parentCoinInfo: string;
-  confirmedHeight: number;
-  spentHeight: string;
-  isSpent: boolean;
-}
+// Суб-компонент, изолированный внутри Suspense-границы
+function CoinExplorerContent() {
+  const params = useParams()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  
+  const network = (params?.network as string) || "mainnet"
+  const coinId = (params?.coinId as string) || ""
+  
+  // Временный txId берем из query, если транзакция еще летит в мемпуле
+  const txId = searchParams.get("txId") || coinId
 
-export default function CoinPage({ params }: { params: Promise<{ network: string; coinId: string }> }) {
+  // Атомарный поллинг FastAPI-бэкенда строго по твоему Python-контракту
+  const { data: txData, isLoading, isError } = useQuery({
+    queryKey: ["explorer-coin", coinId, txId, network],
+    queryFn: async () => {
+      if (!coinId) return null
+      const res = await fetch(`/api/v1/transactions/track-tx?txId=${txId}&targetCoinId=${coinId}`)
+      if (!res.ok) throw new Error("Tracker RPC Error")
+      return res.json()
+    },
+    enabled: !!coinId,
+    refetchInterval: (query) => query.state.data?.status === "CONFIRMED" ? false : 6000,
+    staleTime: 0,
+  })
+
+  const blockchainStatus = txData?.status || "NOT_FOUND"
+  const isConfirmed = blockchainStatus === "CONFIRMED"
+
   return (
-    <div className="min-h-screen w-full bg-zinc-950 text-white font-sans antialiased p-6 flex justify-center">
-      <div className="w-full max-w-md mx-auto space-y-6 pt-4">
-        <Suspense fallback={<div className="w-full h-80 bg-zinc-900/20 animate-pulse rounded-[28px]" />}>
-          <CoinContent params={params} />
-        </Suspense>
+    <div className="space-y-5">
+      {/* Кнопка возврата в дашборд кошелька */}
+      <button 
+        onClick={() => router.push("/dashboard")}
+        className="flex items-center gap-1.5 text-zinc-400 hover:text-white text-xs font-semibold bg-zinc-900/40 hover:bg-zinc-900 border border-zinc-900 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
+      >
+        <ChevronLeft size={14} />
+        <span>Вернуться в кошелек</span>
+      </button>
+
+      {/* Заголовок */}
+      <div className="space-y-1">
+        <span className="text-[10px] font-bold text-[#FF2E93] uppercase tracking-widest bg-[#FF2E93]/10 px-2 py-0.5 rounded-md border border-[#FF2E93]/20">
+          Chia Coin Explorer ({network.toUpperCase()})
+        </span>
+        <h1 className="text-xl font-black text-white tracking-tight break-all pt-1">
+          Монета #{coinId.slice(0, 12)}...
+        </h1>
       </div>
+
+      {isLoading ? (
+        <div className="p-8 text-center text-xs font-medium text-zinc-500 uppercase tracking-wider animate-pulse">
+          Поиск монеты в сети Chia...
+        </div>
+      ) : isError || txData?.success === false ? (
+        <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] p-6 text-center">
+          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Монета не найдена в блокчейне</p>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          
+          {/* Блок статуса */}
+          <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
+            <CardContent className="p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`p-2.5 rounded-xl border shrink-0 ${
+                  isConfirmed ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                }`}>
+                  {isConfirmed ? <ShieldCheck size={20} /> : <Clock size={20} className="animate-spin" style={{ animationDuration: '4s' }} />}
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-white">
+                    {isConfirmed ? "Статус: Подтверждена" : "Статус: В Мемпуле (Ожидание)"}
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 leading-normal">
+                    {isConfirmed 
+                      ? "Монета успешно создана и записана в реестр" 
+                      : "Транзакция по созданию монеты находится в очереди"}
+                  </p>
+                </div>
+              </div>
+              
+              {isConfirmed && txData?.block_height && (
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">Высота записи</span>
+                  <span className="font-mono text-xs font-bold text-emerald-400">#{txData.block_height}</span>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Параметры монеты */}
+          <div className="bg-zinc-900/10 border border-zinc-900/50 rounded-[24px] p-5 space-y-3.5">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Box size={13} />
+              <span>Спецификация Coin Record</span>
+            </h3>
+
+            <div className="space-y-2.5 text-[11px] font-medium">
+              <div className="flex justify-between items-start gap-4 py-1.5 border-b border-zinc-900/40">
+                <span className="text-zinc-500 min-w-[120px]">Coin ID (Name):</span>
+                <span className="font-mono text-zinc-300 break-all text-right select-all">{coinId}</span>
+              </div>
+
+              {searchParams.get("txId") && (
+                <div className="flex justify-between items-start gap-4 py-1.5">
+                  <span className="text-zinc-500 min-w-[120px]">Мемпул Tx ID:</span>
+                  <span className="font-mono text-zinc-400 break-all text-right select-all">{searchParams.get("txId")}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function CoinContent({ params }: { params: Promise<{ network: string; coinId: string }> }) {
-  const { network, coinId } = use(params)
-  const networkName = network.toLowerCase()
-
-  const { data: coin, isLoading, isError } = useQuery<CoinDetails>({
-    queryKey: ['coinExplorerDetails', networkName, coinId],
-    queryFn: () => handleApi<CoinDetails>(fetch(`/api/explorer/${networkName}/coin/${coinId}`)),
-  })
-
-  if (isLoading || !coin) {
-    return <div className="text-xs text-zinc-500 animate-pulse text-center pt-40 font-black uppercase tracking-widest">Чтение CoinRecord...</div>
-  }
-
-  if (isError) {
-    return <div className="text-xs text-[#FF2E93] text-center pt-40 font-black uppercase tracking-widest">Монета не найдена в блокчейне</div>
-  }
-
+// Экспортируем корневой компонент страницы, обернутый в Suspense
+export default function CoinExplorerPage() {
   return (
-    <div className="w-full space-y-6 animate-in fade-in duration-300">
-      
-      {/* ХЕДЕР */}
-      <header className="flex items-center justify-between w-full select-none">
-        <Link href={`/explorer/${networkName}`} className="p-2.5 rounded-xl bg-zinc-900/40 border border-zinc-800 text-zinc-400 hover:text-white transition-all active:scale-95">
-          <ArrowLeft size={14} />
-        </Link>
-        <span className="text-[9px] font-black uppercase tracking-widest px-3 py-1 rounded-xl border text-[#FF2E93] bg-[#FF2E93]/5 border-[#FF2E93]/20">
-          {networkName}
-        </span>
-      </header>
-
-      {/* ЗАГОЛОВОК СТРАНИЦЫ */}
-      <section className="space-y-1">
-        <h1 className="text-3xl font-black tracking-tight text-white leading-none">
-          Спецификация <span className="bg-gradient-to-r from-emerald-400 to-teal-500 bg-clip-text text-transparent">Монеты</span>
-        </h1>
-        <p className="text-xs font-semibold text-zinc-400">
-          Детальный аудит записи активов Chia Coin (UTXO).
-        </p>
-      </section>
-
-      {/* СУММА И СТАТУС ТРАТЫ */}
-      <div className="w-full bg-zinc-900/40 border border-zinc-900 p-5 rounded-[28px] backdrop-blur-xl shadow-2xl flex items-center justify-between">
-        <div className="space-y-0.5">
-          <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block">Объем записи коина</span>
-          <span className="text-2xl font-black text-emerald-400 tracking-tight block">+{coin.amountXch} XCH</span>
+    <Suspense 
+      fallback={
+        <div className="p-8 text-center text-xs font-medium text-zinc-500 uppercase tracking-wider animate-pulse">
+          Загрузка окружения Next.js 16...
         </div>
-        <div className={`px-3 py-1 rounded-xl text-[9px] font-black uppercase border tracking-widest ${
-          coin.isSpent ? "bg-[#FF2E93]/5 border-[#FF2E93]/20 text-[#FF2E93]" : "bg-emerald-500/5 border-emerald-500/20 text-emerald-400"
-        }`}>
-          {coin.isSpent ? "Spent" : "Unspent (UTXO)"}
-        </div>
-      </div>
-
-      {/* ТЕХНИЧЕСКИЙ КОРПУС ДАННЫХ */}
-      <div className="w-full bg-zinc-900/40 border border-zinc-900 p-5 rounded-[28px] backdrop-blur-xl shadow-2xl space-y-4 text-sm">
-        
-        {/* COIN ID */}
-        <div className="border-b border-zinc-900/40 pb-3">
-          <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block mb-1">Coin ID (Идентификатор)</span>
-          <span className="text-xs font-mono font-black text-zinc-200 block break-all select-all">{coin.coinId}</span>
-        </div>
-
-        {/* ХЕШИ ВЛАДЕЛЬЦЕВ */}
-        <div className="space-y-3">
-          <div>
-            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block mb-0.5">Puzzle Hash (Владелец)</span>
-            <span className="text-[10px] font-mono font-bold text-zinc-400 block break-all select-all">{coin.puzzleHash}</span>
-          </div>
-          <div>
-            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block mb-0.5">Parent Coin Info (Родитель)</span>
-            <span className="text-[10px] font-mono font-bold text-zinc-500 block break-all select-all">{coin.parentCoinInfo}</span>
-          </div>
-        </div>
-
-        {/* ВЫСОТА БЛОКОВ */}
-        <div className="grid grid-cols-2 gap-4 border-t border-zinc-900/40 pt-4">
-          <Link href={`/explorer/${networkName}/block/${coin.confirmedHeight}`} className="bg-zinc-950/40 p-3 rounded-2xl border border-zinc-900 hover:border-zinc-800 transition-colors block group">
-            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-0.5 flex items-center gap-1"><Layers size={10} /> Блок создания</span>
-            <span className="font-mono font-black text-zinc-300 group-hover:text-emerald-400 text-xs transition-colors">#{coin.confirmedHeight}</span>
-          </Link>
-          <div className="bg-zinc-950/40 p-3 rounded-2xl border border-zinc-900">
-            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider block mb-0.5 flex items-center gap-1"><Clock size={10} /> Блок уничтожения</span>
-            <span className="font-mono font-black text-zinc-400 text-xs">{coin.spentHeight}</span>
-          </div>
-        </div>
-
-      </div>
-
-    </div>
+      }
+    >
+      <CoinExplorerContent />
+    </Suspense>
   )
 }

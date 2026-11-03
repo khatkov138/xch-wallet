@@ -1,9 +1,10 @@
 'use client'
 
 import React from "react"
-import { AuthBackground } from "./auth/_components/AuthBackground"
+
 import { WalletHeaderContainer } from "./_components/WalletHeaderContainer"
 import { WalletFooter } from "./_components/WalletFooter"
+import { AuthBackground } from "./_components/AuthBackground"
 
 const MemoizedAuthBackground = React.memo(AuthBackground)
 

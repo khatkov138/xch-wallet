@@ -7,6 +7,7 @@ import { SendModalProvider, useSendModalContext } from "./SendModalContext"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
 import { SendStepOne } from "./SendStepOne"
 import { SendStepTwo } from "./SendStepTwo"
+import { SendStepThree } from "./SendStepThree"
 import { UtxoCard } from "./UtxoCard"
 
 interface SendModalProps { 
@@ -24,11 +25,12 @@ function SendModalContent({ onClose }: { onClose: () => void }) {
     targetAddress, 
     amount, 
     dynamicFees, 
-    pin 
+    pin,
+    txStatus
   } = useSendModalContext()
 
-  // Правая колонка реактивно забирает данные дашборда на месте
   const { unspentCoins, addresses } = useWalletDashboard()
+  const isSuccess = txStatus === "SUCCESS"
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -39,10 +41,19 @@ function SendModalContent({ onClose }: { onClose: () => void }) {
 
         {/* ЛЕВАЯ КОЛОНКА */}
         <div className="w-full md:w-1/2 shrink-0">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {step === 1 ? <SendStepOne /> : <SendStepTwo />}
+          <form onSubmit={isSuccess ? (e) => { e.preventDefault(); onClose(); } : handleSubmit} className="space-y-4">
+            
+            {/* 🎯 Рендеринг шагов с учетом нового SendStepThree */}
+            {isSuccess ? (
+              <SendStepThree />
+            ) : step === 1 ? (
+              <SendStepOne />
+            ) : (
+              <SendStepTwo />
+            )}
 
-            {statusMessage && (
+            {/* Прячем лог на этапе SUCCESS, так как работает графический трекер */}
+            {statusMessage && !isSuccess && (
               <div className="text-xs text-center font-medium bg-zinc-950 border border-zinc-850 p-2.5 rounded-xl text-zinc-300 max-h-20 overflow-y-auto whitespace-pre-wrap scrollbar-thin">
                 {statusMessage}
               </div>
@@ -54,11 +65,24 @@ function SendModalContent({ onClose }: { onClose: () => void }) {
               </Button>
             ) : (
               <div className="flex gap-2">
-                <Button type="button" variant="outline" disabled={loading} onClick={() => setStep(1)} className="w-1/3 h-12 rounded-xl text-xs font-bold cursor-pointer border-zinc-800 text-zinc-300">
-                  Назад
-                </Button>
-                <Button type="submit" disabled={loading || !pin} className="w-2/3 h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer">
-                  {loading ? <Loader2 size={14} className="animate-spin text-black" /> : "Подписать и отправить"}
+                {!isSuccess && (
+                  <Button type="button" variant="outline" disabled={loading} onClick={() => setStep(1)} className="w-1/3 h-12 rounded-xl text-xs font-bold cursor-pointer border-zinc-800 text-zinc-300">
+                    Назад
+                  </Button>
+                )}
+                
+                <Button 
+                  type="submit" 
+                  disabled={!isSuccess && (loading || !pin)} 
+                  className={`${isSuccess ? "w-full" : "w-2/3"} h-12 bg-white text-black hover:bg-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all duration-200`}
+                >
+                  {loading ? (
+                    <Loader2 size={14} className="animate-spin text-black" />
+                  ) : isSuccess ? (
+                    "Закрыть окно"
+                  ) : (
+                    "Подписать и отправить"
+                  )}
                 </Button>
               </div>
             )}
