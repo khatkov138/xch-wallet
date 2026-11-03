@@ -3,9 +3,17 @@
 import { useState, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { useWalletWs } from '@/hooks/useWalletWs'; // 🎯 Импортируем наш сокет-хук
 
 interface ProvidersProps {
   children: ReactNode;
+}
+
+// 🎯 ИЗОЛИРОВАННЫЙ ДЕМОН: запускает сокет в фоне. 
+// Возвращает null, благодаря чему вообще не триггерит ререндер основного дерева UI.
+function WalletSocketDaemon() {
+  useWalletWs(); 
+  return null;
 }
 
 export function Providers({ children }: ProvidersProps) {
@@ -26,6 +34,9 @@ export function Providers({ children }: ProvidersProps) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      {/* 🚀 Запускаем единственный фоновый вебсокет-поток */}
+      <WalletSocketDaemon />
+
       {children}
       
       {/* 
