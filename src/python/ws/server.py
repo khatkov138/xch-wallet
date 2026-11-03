@@ -11,12 +11,14 @@ SECRET_BRIDGE_TOKEN = os.getenv("API_SECRET", "LOCAL_DEV_SECRET_TOKEN_998877")
 
 class ConnectionManager:
     def __init__(self):
-        # Фронтенды (Next.js вкладки), которые слушают статус
         self.active_clients: Set[WebSocket] = set()
-        # Постоянное соединение от домашнего скрипта-моста
         self.home_node: WebSocket | None = None
-        # Состояние ноды, живущее строго в оперативной памяти (RAM)
-        self.current_node_state: Dict = {"success": False, "status": "WAITING_FOR_NODE_CONNECT"}
+        # Исходный стейт теперь соответствует сырому формату
+        self.current_node_state: Dict = {
+            "success": False, 
+            "type": "NODE_RAW_UPDATE",
+            "status": "WAITING_FOR_NODE_CONNECT"
+        }
 
     async def connect_home(self, websocket: WebSocket):
         await websocket.accept()
@@ -25,7 +27,7 @@ class ConnectionManager:
 
     def disconnect_home(self):
         self.home_node = None
-        self.current_node_state = {"success": False, "error": "NODE_OFFLINE"}
+        self.current_node_state = {"success": False, "type": "NODE_RAW_UPDATE", "error": "NODE_OFFLINE"}
         print("[❌ WS-СЕРВЕР] Домашний скрипт-мост отключился.")
 
     async def connect_client(self, websocket: WebSocket):
@@ -42,12 +44,12 @@ class ConnectionManager:
         print(f"[👤 WS-СЕРВЕР] Клиент отключился. Осталось: {len(self.active_clients)}")
 
     async def broadcast_to_clients(self, message: Dict):
-        """Веерная рассылка обновлений всем клиентам."""
-        if not self.active_clients:
-            return
-        
+        """Веерная рассылка сырых данных на фронтенд."""
         message["updatedAt"] = int(time.time() * 1000)
         self.current_node_state = message
+
+        if not self.active_clients:
+            return
 
         disconnect_targets = []
         for client in self.active_clients:
@@ -74,25 +76,26 @@ async def websocket_home_node(websocket: WebSocket, token: str = Query(None)):
     await manager.connect_home(websocket)
     try:
         while True:
-            # Ждем входящий JSON от домашнего скрипта-моста
             data = await websocket.receive_json()
             
-            # 📊 КРАСИВЫЙ ЛОГ: Достаем информацию о прилетевшем блоке
-            node_data = data.get("data", {})
-            block_height = node_data.get("currentHeight", "Неизвестно")
-            progress = node_data.get("progressPercent", "0.0000")
-            print(f"[📥 ВХОДЯЩИЙ] Получен новый блок от дома: #{block_height} (Синхронизация: {progress}%)")
+            # 📊 ИСПРАВЛЕННЫЙ ЛОГ: Парсим структуру сырого блокчейн стейта Chia
+            network_name = data.get("networkName", "unknown")
+            blockchain_state = data.get("blockchain_state", {})
+            peak = blockchain_state.get("peak", {})
+            block_height = peak.get("height", 0) if peak else 0
             
-            # Рассылаем веером на все открытые Next.js вкладки
+            print(f"[📥 ВХОДЯЩИЙ] Транзит сырого блока #{block_height} ({network_name}) на фронтенд...")
+            
+            # Пересылаем пакет «как есть» без изменений
             await manager.broadcast_to_clients(data)
             
     except WebSocketDisconnect:
         manager.disconnect_home()
-        await manager.broadcast_to_clients({"success": False, "error": "NODE_OFFLINE"})
+        await manager.broadcast_to_clients({"success": False, "type": "NODE_RAW_UPDATE", "error": "NODE_OFFLINE"})
     except Exception as e:
         print(f"[⚠️ WS-СЕРВЕР] Ошибка сокета ноды: {e}")
         manager.disconnect_home()
-        await manager.broadcast_to_clients({"success": False, "error": "NODE_OFFLINE"})
+        await manager.broadcast_to_clients({"success": False, "type": "NODE_RAW_UPDATE", "error": "NODE_OFFLINE"})
 
 @app.websocket("/ws/client")
 async def websocket_client(websocket: WebSocket):

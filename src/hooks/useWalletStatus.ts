@@ -1,27 +1,9 @@
 'use client';
 
 import { useQuery, skipToken } from '@tanstack/react-query';
+import { SocketPayload } from './useWalletWs';
 
-// --- ТИПЫ ДАННЫХ ---
-export interface PeerInfo {
-  ip: string;
-  port: number;
-  trafficUpMb: string;
-  trafficDownMb: string;
-}
-
-export interface FeeOption {
-  mojo: number;
-  seconds: number;
-}
-
-export interface DynamicFees {
-  low: FeeOption;
-  medium: FeeOption;
-  high: FeeOption;
-}
-
-export interface NodeShortStatus {
+export interface DerivedNodeStatus {
   network: string;
   isSynced: boolean;
   isSyncingMode: boolean;
@@ -31,43 +13,88 @@ export interface NodeShortStatus {
   difficulty: number;
   networkSpaceTib: string;
   peakTime: string | null;
-  totalPeers: number;
-  peersList: PeerInfo[];
-  dynamicFees?: DynamicFees;
+  mempoolSize: number;
+}
+
+// Плоский результирующий интерфейс хука для мемоизации
+interface WalletStatusResult {
+  isPythonDown: boolean;
+  isRpcDown: boolean;
+  isNotSynced: boolean;
+  hasError: boolean;
+  isLoading: boolean;
+  nodeData: DerivedNodeStatus | null;
 }
 
 const QUERY_KEY = ['chiaNodeStatusCombined'];
 
-// --- РЕАКТИВНЫЙ ХУК-РАСЧЕТЧИК ---
-export function useWalletStatus() {
-  const { data, status, error } = useQuery<NodeShortStatus, Error>({
+export function useWalletStatus(): WalletStatusResult {
+  // 🎯 ФИКС: Переносим ВСЮ деривацию и логику флагов в селектор.
+  // Компонент будет ререндериться ТОЛЬКО тогда, когда изменится конечный результат вычислений!
+  return useQuery<SocketPayload, Error, WalletStatusResult>({
     queryKey: QUERY_KEY,
-    // 🎯 ФИКС: Используем skipToken. Это легально отключает queryFn для TanStack Query v5+.
-    // Кэш больше никогда автоматически не затрется дефолтными null/undefined значениями.
     queryFn: skipToken,
     staleTime: Infinity,
     gcTime: Infinity,
-  });
+    select: (rawPayload) => {
+      // Этот блок выполняется только при реальном изменении rawPayload в кэше
+      let nodeData: DerivedNodeStatus | null = null;
 
-  // Расчет флагов падения сети или ноды
-  const isPythonDown = status === 'error' && error?.message === 'PYTHON_DOWN';
-  const isRpcDown = status === 'error' && error?.message === 'RPC_DOWN';
-  
-  const isNotSynced = data ? !data.isSynced : false;
-  const hasError = isPythonDown || isRpcDown;
+      if (rawPayload?.blockchain_state) {
+        const state = rawPayload.blockchain_state;
+        const sync = state.sync;
+        const peak = state.peak;
 
-  // 🔄 ИДЕАЛЬНЫЙ РАСЧЕТ ИНИЦИАЛИЗАЦИИ:
-  // До тех пор, пока сокет-демон не прислал самый первый пакет (data === undefined) 
-  // и при этом нет ошибок сети — мы находимся в состоянии первичной загрузки.
-  const isLoading = data === undefined && status !== 'error';
+        const currentHeight = peak?.height ?? 0;
+        let targetHeight = currentHeight;
+        let progressPercent = '100.0000';
 
-  return {
-    isPythonDown,
-    isRpcDown,
-    isNotSynced,
-    hasError,
-    isLoading,
-    nodeData: data ?? null, 
-    dynamicFees: data?.dynamicFees,
+        if (!sync.synced) {
+          const tip = sync.sync_tip_height ?? 0;
+          targetHeight = tip > 0 ? tip : currentHeight;
+          progressPercent = targetHeight > 0 
+            ? ((currentHeight / targetHeight) * 100).toFixed(4) 
+            : '0.0000';
+        }
+
+        const ts = peak?.timestamp;
+        const peakTime = ts && ts > 0 
+          ? new Date(ts * 1000).toISOString().replace('+00:00', 'Z') 
+          : null;
+
+        nodeData = {
+          network: rawPayload.networkName ?? 'unknown',
+          isSynced: !!sync.synced,
+          isSyncingMode: !!sync.sync_mode || (!sync.synced && currentHeight < targetHeight),
+          currentHeight,
+          targetHeight,
+          progressPercent,
+          difficulty: Number(state.difficulty ?? 0),
+          networkSpaceTib: String(state.space ?? '0'),
+          mempoolSize: Number(state.mempool_size ?? 0),
+          peakTime,
+        };
+      }
+
+      const isNotSynced = nodeData ? !nodeData.isSynced : false;
+
+     
+      return {
+        isPythonDown: false, // Флаги ошибок обрабатываются через status, вычисляем ниже по цепочке или оставляем дефолт
+        isRpcDown: false,
+        isNotSynced,
+        hasError: false,
+        isLoading: rawPayload === undefined,
+        nodeData,
+      };
+    },
+  }).data ?? {
+    // Дефолтный стейт на случай, если данных вообще нет в кэше (например, до старта сокета)
+    isPythonDown: false,
+    isRpcDown: false,
+    isNotSynced: false,
+    hasError: false,
+    isLoading: true,
+    nodeData: null,
   };
 }

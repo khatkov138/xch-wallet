@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react"
 import { useSendTransaction } from "@/hooks/useSendTransaction"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
-import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { useWalletFees } from "@/hooks/useWalletFees" // Наш новый ленивый хук
 import { Button } from "@/components/ui/button"
 import { Loader2, X, AlertCircle, TrendingDown, ShieldCheck, Zap } from "lucide-react"
 import { renderHighlightedAddress } from "@/lib/utils/ui"
@@ -13,24 +13,35 @@ type FeeTier = "low" | "medium" | "high"
 
 export function SendModal({ isOpen, onClose }: SendModalProps) {
   const [targetAddress, setTargetAddress] = useState(""), [amount, setAmount] = useState("")
-  const { dynamicFees } = useWalletStatus(), [selectedTier, setSelectedTier] = useState<FeeTier>("medium")
+  const [selectedTier, setSelectedTier] = useState<FeeTier>("medium")
   const [customFeeMojo, setCustomFeeMojo] = useState<string>("0"), [pin, setPin] = useState("")
   const { unspentCoins, addresses } = useWalletDashboard()
+
+  // 🎯 Алиас под твою переменную: данные подгружаются лениво при открытии модалки
+  const { data: dynamicFees } = useWalletFees(isOpen)
 
   const { step, setStep, loading, statusMessage, handleSubmit, resetHooksState, preparedSpendData } = useSendTransaction({
     targetAddress, amount, customFeeMojo, pin, setPin, onClose, unspentCoins, walletAddresses: addresses
   })
 
-  // Синхронизация при загрузке данных о комиссиях
+  // Синхронизация при открытии/закрытии модалки
   useEffect(() => {
     if (!isOpen) { setTargetAddress(""); setAmount(""); setSelectedTier("medium"); setCustomFeeMojo("0"); setPin(""); resetHooksState() }
-    else if (dynamicFees) { setCustomFeeMojo(String(dynamicFees.medium.mojo)) }
-  }, [isOpen, dynamicFees])
+  }, [isOpen])
+
+  // 🎯 Реактивный пуш mojo выбранного тира напрямую в хук отправки
+  useEffect(() => {
+    if (dynamicFees) {
+      setCustomFeeMojo(String(dynamicFees[selectedTier].mojo))
+    }
+  }, [selectedTier, dynamicFees])
 
   const audit = preparedSpendData?.audit_info
   if (!isOpen) return null
 
   const getFeeInXchString = () => customFeeMojo === "0" ? "0 XCH" : `${(parseFloat(customFeeMojo) / 1e12).toFixed(12).replace(/\.?0+$/, "")} XCH`
+  
+  // 🎯 ОРИГИНАЛЬНАЯ СТРОКА ОДИН В ОДИН, КАК У ТЕБЯ
   const getTotalOutflowString = () => `${(parseFloat(amount) || 0).toFixed(4)} XCH`
 
   // Вспомогательные данные для мапинга кнопок
@@ -39,6 +50,7 @@ export function SendModal({ isOpen, onClose }: SendModalProps) {
     { t: "medium", l: "Средняя 🔥", icon: ShieldCheck, cl: "text-amber-500" },
     { t: "high", l: "Высокая 🚀", icon: Zap, cl: "text-[#FF2E93]" }
   ] as const
+
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">

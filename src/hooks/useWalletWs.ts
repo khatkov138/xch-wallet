@@ -3,43 +3,37 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
-export interface PeerInfo {
-  ip: string;
-  port: number;
-  trafficUpMb: string;
-  trafficDownMb: string;
+// Внутренние интерфейсы официального сырого ответа Chia Full Node
+export interface ChiaBlockPeak {
+  height: number;
+  timestamp: number;
+  header_hash: string;
+  weight: string;
 }
 
-export interface FeeOption {
-  mojo: number;
-  seconds: number;
+export interface ChiaSyncState {
+  sync_mode: boolean;
+  sync_progress_height: number;
+  sync_tip_height: number;
+  synced: boolean;
 }
 
-export interface DynamicFees {
-  low: FeeOption;
-  medium: FeeOption;
-  high: FeeOption;
-}
-
-export interface NodeShortStatus {
-  network: string;
-  isSynced: boolean;
-  isSyncingMode: boolean;
-  currentHeight: number;
-  targetHeight: number;
-  progressPercent: string;
+export interface ChiaBlockchainState {
   difficulty: number;
-  networkSpaceTib: string;
-  peakTime: string | null;
-  totalPeers: number;
-  peersList: PeerInfo[];
-  dynamicFees?: DynamicFees;
+  mempool_size: number;
+  space: string;
+  sub_slot_iters: number;
+  sync: ChiaSyncState;
+  peak: ChiaBlockPeak | null;
 }
 
+// Новый формат пакета транзитного WS-сервера
 export interface SocketPayload {
   success: boolean;
+  type?: 'NODE_RAW_UPDATE';
   error?: 'NODE_OFFLINE' | 'WAITING_FOR_NODE_CONNECT' | string;
-  data?: NodeShortStatus;
+  networkName?: string;
+  blockchain_state?: ChiaBlockchainState;
   updatedAt: number;
 }
 
@@ -61,8 +55,7 @@ export function useWalletWs() {
       
       if (query) {
         query.setState({
-          // 🧠 ФИКС: Сохраняем прошлый стейт данных, чтобы UI не падал в скелетон/загрузку,
-          // а просто отображал ошибку поверх старых данных (stale-while-error)
+          // Паттерн stale-while-error: сохраняем старые данные, чтобы предотвратить Layout Shift
           data: query.state.data, 
           error: new Error(errorType),
           status: 'error',
@@ -90,8 +83,7 @@ export function useWalletWs() {
         const query = queryCache.find({ queryKey: QUERY_KEY });
         
         if (query) {
-          // 🎉 ФИКС: Сбрасываем ошибку, оставляя кэш нетронутым. 
-          // Поскольку data не затерта, UI мгновенно переключится в рабочий режим, избегая стадии loading
+          // Сбрасываем ошибку без триггера скелетонов загрузки
           query.setState({ 
             error: null, 
             status: 'success' 
@@ -104,8 +96,10 @@ export function useWalletWs() {
         try {
           const payload: SocketPayload = JSON.parse(event.data);
 
-          if (payload.success && payload.data) {
-            queryClient.setQueryData(QUERY_KEY, payload.data);
+          // Проверяем наличие сырого блокчейн-стейта
+          if (payload.success && payload.blockchain_state) {
+            // Пишем сырой payload атомарно "как есть" прямо в кэш TanStack
+            queryClient.setQueryData(QUERY_KEY, payload);
           } else if (payload.error) {
             console.warn(`[⚠️ WALLET-WS] Бэкенд вернул ошибку ноды: ${payload.error}`);
             if (payload.error === 'NODE_OFFLINE' || payload.error === 'WAITING_FOR_NODE_CONNECT') {
@@ -113,7 +107,7 @@ export function useWalletWs() {
             }
           }
         } catch (err) {
-          // Игнорируем мусор
+          // Игнорируем мусорные пакеты парсинга
         }
       };
 
