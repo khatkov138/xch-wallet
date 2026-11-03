@@ -12,15 +12,12 @@ export function useWalletDashboard() {
   const isScreenLocked = useWalletSession((state: any) => state.isScreenLocked)
 
   const isReadyToFetch = !isVerifying && !isScreenLocked && !!unhardenedPkHex
-
-  // 🎯 ОПРЕДЕЛЯЕМ РЕЖИМ НА ОСНОВЕ НАЛИЧИЯ ИНДЕКСОВ В СТОРЕ
-  // Если индексов в Zustand еще нет — запускаем heavy (первичный глубокий скан)
   const currentMode = !activeIndexes ? "heavy" : "light"
 
-  const query = useQuery<any>({
-    // В queryKey оставляем только ключ кошелька, чтобы изменение activeIndexes
-    // не вызывало жесткого сброса кэша и мерцания интерфейса
-    queryKey: ["wallet-dashboard", unhardenedPkHex],
+  const query = useQuery({
+    // 🎯 ФИКС 1: Добавили activeIndexes в queryKey. 
+    // Теперь при переходе heavy -> light запрос мгновенно реагирует на смену аргументов.
+    queryKey: ["wallet-dashboard", unhardenedPkHex, activeIndexes],
     queryFn: async () => {
       const params = new URLSearchParams({
         publicKeyHex: unhardenedPkHex,
@@ -31,7 +28,6 @@ export function useWalletDashboard() {
       
       console.log(`📡 [API TRIGGER] Запрос отправлен! Сеть качает в режиме: ${currentMode.toUpperCase()}`)
 
-      // 🎯 ТОЧКА ВХОДА: Перевели на относительный путь через наш рабочий Next.js прокси (порт 3000)
       const res = await fetch(`/api/wallet/dashboard?${params.toString()}`)
       if (!res.ok) throw new Error("Sync failed")
       
@@ -40,11 +36,14 @@ export function useWalletDashboard() {
     enabled: isReadyToFetch,
     staleTime: 5 * 60 * 1000,
     refetchInterval: 15 * 1000,
-    refetchIntervalInBackground: false
+    refetchIntervalInBackground: false,
+    
+    // 🎯 ФИКС 2: SELECT-MEMOIZATION. Через встроенный Structural Sharing в TanStack Query v5 
+    // ссылки на массивы внутри data останутся прежними, если бэк вернул те же данные. Ререндеров в Layout нет.
+    select: (data) => data
   })
 
   // 🎯 СИНХРОНИЗАЦИЯ АКТИВНЫХ ИНДЕКСОВ БЕЗ ЦИКЛИЧЕСКОЙ ЗАВИСИМОСТИ
-  // Обновляем стор Zustand строго ПОСЛЕ завершения запроса и только если данные реально изменились
   useEffect(() => {
     if (query.data?.meta?.active_indexes) {
       const freshIndexesStr = query.data.meta.active_indexes.join(",")
@@ -63,9 +62,9 @@ export function useWalletDashboard() {
   return {
     realXCHStr,
     numericXCH,
-    addresses,       // 🎯 Массив адресов с address_pubkey_hex внутри
-    transactions,
-    unspentCoins,    // 🎯 Оптимизированный легкий список монет
+    addresses,       // Стабильная ссылка благодаря select-паттерну
+    transactions,    // Стабильная ссылка
+    unspentCoins,    // Стабильная ссылка
     balance: query.data?.balance ?? null, 
     error: query.error,
     isFetching: query.isFetching,

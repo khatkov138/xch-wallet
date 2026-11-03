@@ -52,6 +52,45 @@ async def get_network_name_from_rpc(crt_path, key_path) -> str:
         raise ValueError("Full Node RPC вернул success: false")
 
 
+async def fetch_blockchain_state_from_rpc(crt_path, key_path) -> dict:
+    """Делает разовый запрос к RPC для мгновенной инициализации стейта"""
+    async with httpx.AsyncClient(verify=False, cert=(crt_path, key_path), timeout=4.0) as client:
+        res = await client.post(f"{BASE_RPC_URL}/get_blockchain_state", json={})
+        data = res.json()
+        if data.get("success"):
+            return data.get("blockchain_state", {})
+        raise ValueError("Full Node RPC /get_blockchain_state вернул success: false")
+
+
+async def listen_vps_commands(vps_ws, network_name: str, crt_path, key_path):
+    """Слушает входящие триггеры от VPS для мгновенного ответа текущим стейтом"""
+    try:
+        async for message in vps_ws:
+            command_data = json.loads(message)
+            if command_data.get("type") == "REQUEST_FETCH_STATE":
+                print(f"[📥 ЗАПРОС] Получен триггер инициализации от VPS. Запрашиваем RPC...")
+                try:
+                    raw_state = await fetch_blockchain_state_from_rpc(crt_path, key_path)
+                    if not raw_state:
+                        continue
+
+                    clean_payload = {
+                        "success": True,
+                        "type": "NODE_RAW_UPDATE",
+                        "networkName": network_name,
+                        "blockchain_state": raw_state
+                    }
+                    await vps_ws.send(json.dumps(clean_payload))
+                    
+                    peak = raw_state.get("peak", {})
+                    current_height = peak.get("height", 0) if peak else 0
+                    print(f"[⚡ МГНОВЕННЫЙ ПУШ] Инициализирующий блок {current_height} отправлен на VPS")
+                except Exception as e:
+                    print(f"[⚠️ RPC_ERR] Не удалось получить стейт по запросу: {e}")
+    except websockets.exceptions.ConnectionClosed:
+        pass  # Будет обработано основным циклом bridge_loop
+
+
 async def handle_blockchain_stream(chia_ws, vps_ws, network_name: str):
     subscribe_cmd = {
         "command": "register_service",
@@ -108,7 +147,12 @@ async def bridge_loop():
                        websockets.connect(VPS_WS_URL, max_size=None) as vps_ws:
                 
                 print("[🚀 МОСТ] Установлено сквозное соединение.")
-                await handle_blockchain_stream(chia_ws, vps_ws, network_name=network_name)
+                
+                # Запускаем параллельно стрим из Chia и прослушку команд от VPS
+                await asyncio.gather(
+                    handle_blockchain_stream(chia_ws, vps_ws, network_name=network_name),
+                    listen_vps_commands(vps_ws, network_name, crt_path, key_path)
+                )
 
         except (websockets.exceptions.ConnectionClosed, OSError, httpx.HTTPError) as e:
             print(f"[⚠️ РАЗРЫВ/RPC_DOWN] Сбой каналов ({e}). Реконнект через 5 секунд...")

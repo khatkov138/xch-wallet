@@ -21,11 +21,10 @@ interface RawFeesResponse {
 
 const FEES_QUERY_KEY = ['chiaNodeFeesEstimate'];
 
-export function useWalletFees(isEnabled: boolean = false) {
+export function useWalletFees(isEnabled: boolean = false, coinSpendsCount: number = 1) {
   return useQuery<RawFeesResponse, Error, CalculatedFees>({
     queryKey: FEES_QUERY_KEY,
     queryFn: async () => {
-      // Изуем относительный путь через Next.js Route-Proxy
       const res = await fetch('/api/v1/node/fees');
       
       if (!res.ok) {
@@ -34,31 +33,40 @@ export function useWalletFees(isEnabled: boolean = false) {
       
       return res.json();
     },
-    // Запрос пойдет строго когда модалка/форма открыта
     enabled: isEnabled,
-    // Кэшируем на 15 секунд, чтобы не спамить ноду при перекликах в UI
     staleTime: 15000, 
     gcTime: 60000,
     select: (rawResponse) => {
       const estimates = rawResponse.estimates || [];
-      const txCost = rawResponse.cost || 18000000;
+      const responseBlockCost = rawResponse.cost || 18000000;
 
-      // Гарантированные безопасные пороги (mojo на единицу cost)
-      const baseLow = 1 * txCost;
-      const baseMedium = 5 * txCost;
-      const baseHigh = 15 * txCost;
+      // 1. Динамический расчет реального веса транзакции в CLVM байтах
+      const BASE_COST = 5000;
+      const COST_PER_SPEND = 11000;
+      const actualTxCost = BASE_COST + (coinSpendsCount * COST_PER_SPEND);
 
+      // 2. Демасштабирование: переводим рейты из "за целый блок" в базовый коэффициент "Mojo за 1 Cost"
+      const highRate = (estimates[0] || 0) / responseBlockCost;
+      const mediumRate = (estimates[1] || 0) / responseBlockCost;
+      const lowRate = (estimates[2] || 0) / responseBlockCost;
+
+      // 3. Расчет адаптивной минимальной подушки безопасности (Mojo) под реальный вес
+      const baseLow = 1 * actualTxCost;
+      const baseMedium = 5 * actualTxCost;
+      const baseHigh = 15 * actualTxCost;
+
+      // 4. Финальное масштабирование рыночной комиссии под вес транзакции с защитой от просадок
       return {
         high: { 
-          mojo: Math.max(Number(estimates[0] || 0), baseHigh), 
+          mojo: Math.max(Math.round(highRate * actualTxCost), baseHigh), 
           seconds: 60 
         },
         medium: { 
-          mojo: Math.max(Number(estimates[1] || 0), baseMedium), 
+          mojo: Math.max(Math.round(mediumRate * actualTxCost), baseMedium), 
           seconds: 300 
         },
         low: { 
-          mojo: Math.max(Number(estimates[2] || 0), baseLow), 
+          mojo: Math.max(Math.round(lowRate * actualTxCost), baseLow), 
           seconds: 600 
         }
       };

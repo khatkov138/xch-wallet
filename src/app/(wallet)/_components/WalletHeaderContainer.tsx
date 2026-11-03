@@ -35,17 +35,37 @@ export function WalletHeaderContainer() {
   const isBannerHidden = nodeData?.isSynced === true && !hasError
 
   // Конфигурация статуса для нижней шапки
-  const headerStatus = useMemo(() => {
+    const headerStatus = useMemo(() => {
+    // 1. ПЕРВЫЙ ПРИОРИТЕТ: Если упал питон или RPC — жестко Offline, игнорируя загрузку
     if (isPythonDown || isRpcDown) {
-      return { text: "Offline", dotClass: "bg-[#FF2E93]", badgeClass: "text-[#FF2E93] bg-[#FF2E93]/10 border-[#FF2E93]/20 hover:bg-[#FF2E93]/15" }
+      return { 
+        text: "Offline", 
+        dotClass: "bg-[#FF2E93]", 
+        badgeClass: "text-[#FF2E93] bg-[#FF2E93]/10 border-[#FF2E93]/20 hover:bg-[#FF2E93]/15" 
+      }
     }
+    // 2. ВТОРОЙ ПРИОРИТЕТ: Загрузка проверяется только если сеть физически доступна
     if (isLoading && !nodeData) {
-      return { text: "Loading...", dotClass: "bg-zinc-500", badgeClass: "text-zinc-400 bg-zinc-800/40 border-zinc-700/50" }
+      return { 
+        text: "Loading...", 
+        dotClass: "bg-zinc-500", 
+        badgeClass: "text-zinc-400 bg-zinc-800/40 border-zinc-700/50" 
+      }
     }
+    // 3. ТРЕТИЙ ПРИОРИТЕТ: Нода в сети, проверяем синхронизацию
     if (isNotSynced) {
-      return { text: "Syncing", dotClass: "bg-zinc-400", badgeClass: "text-zinc-300 bg-zinc-900/40 border-zinc-800 hover:bg-zinc-900/60" }
+      return { 
+        text: "Syncing", 
+        dotClass: "bg-zinc-400", 
+        badgeClass: "text-zinc-300 bg-zinc-900/40 border-zinc-800 hover:bg-zinc-900/60" 
+      }
     }
-    return { text: "Online", dotClass: "bg-emerald-400", badgeClass: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15" }
+    // 4. ДЕФОЛТ: Полный синхрон
+    return { 
+      text: "Online", 
+      dotClass: "bg-emerald-400", 
+      badgeClass: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15" 
+    }
   }, [isPythonDown, isRpcDown, isLoading, nodeData, isNotSynced])
 
   const currentNetwork = nodeData?.network || null
@@ -65,7 +85,7 @@ export function WalletHeaderContainer() {
           isPythonDown={isPythonDown}
           isRpcDown={isRpcDown}
           isNotSynced={isNotSynced}
-          isSkeleton={isSkeleton}
+         
           isBannerHidden={isBannerHidden}
           progressPercent={nodeData?.progressPercent || "0.0000"}
           currentHeight={nodeData?.currentHeight || 0}

@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { useWalletSession } from "@/store/useWalletStore"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
+import { selectChiaCoins } from "./ChiaCoinSelection"
 
 interface UseSendTransactionProps {
   targetAddress: string
@@ -36,7 +37,7 @@ export function useSendTransaction({
   const [statusMessage, setStatusMessage] = useState("")
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
   const [localSnapshot, setLocalSnapshot] = useState<LocalSnapshot | null>(null)
-
+  const sentTransactionsRef = useRef<Set<string>>(new Set());
   const { getMnemonicForSigning } = useWalletAuth()
 
   const resetHooksState = () => {
@@ -52,106 +53,91 @@ export function useSendTransaction({
 
   // --- МУТАЦИЯ ШАГА 1: Запрос на сборку транзакции ---
 
-  const buildBundleMutation = useMutation({
-    mutationFn: async () => {
-      if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
+ const buildBundleMutation = useMutation({
+  mutationFn: async () => {
+    if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
 
-      const xch = parseFloat(amount.trim().replace(",", "."))
-      if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
+    const xch = parseFloat(amount.trim().replace(",", "."))
+    if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
 
-      const totalMojosToSend = Math.round(xch * 1_000_000_000_000)
-      const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
-      
-      // 🎯 ЖЕЛЕЗНЫЙ ФИКС: Требуемая сумма для поиска монет — это чисто сумма отправки.
-      // Никакие комиссии сюда не прибавляем, так как бэк сам распределит остатки монет.
-      const required = totalMojosToSend 
+    const totalMojosToSend = Math.round(xch * 1_000_000_000_000)
+    const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
 
-      let selectedItems = []
-      let accumulatedAmount = 0
+    // 🎯 ИСПОЛЬЗУЕМ ЕДИНЫЙ ХЕЛПЕР ДЛЯ ПОДБОРА МОНЕТ
+    const selectedItems = selectChiaCoins(amount, unspentCoins)
+    
+    // Считаем общую сумму накопленных Mojo через чистый reduce
+    const accumulatedAmount = selectedItems.reduce((sum: number, item: any) => sum + item.coin.amount, 0)
 
-      // Сортируем абсолютно ВСЕ монеты от больших к мелким (b - a)
-      const sortedCoins = [...unspentCoins]
-        .sort((a: any, b: any) => b.coin.amount - a.coin.amount)
+    // Проверка баланса строго по чистой сумме отправки
+    if (accumulatedAmount < totalMojosToSend) {
+      throw new Error(`Недостаточно монет на всех адресах кошелька! Набрано: ${accumulatedAmount} / Требуется для отправки: ${totalMojosToSend} mojo`)
+    }
 
-      // Складываем монеты в массив, пока не наберется нужная сумма отправки
-      for (const item of sortedCoins) {
-        selectedItems.push(item)
-        accumulatedAmount += item.coin.amount
-        if (accumulatedAmount >= required) {
-          break // Набрали сумму отправки — выходим
-        }
+    // 2. ФОРМИРОВАНИЕ МАССИВА INPUTS ДЛЯ БЭКЕНДА
+    const inputs = selectedItems.map((item: any) => {
+      const matchedAddressData = walletAddresses.find(
+        (addr: any) => addr.puzzle_hash.toLowerCase() === item.coin.puzzle_hash.toLowerCase()
+      )
+      const coinPkHex = matchedAddressData?.address_pubkey_hex
+
+      if (!coinPkHex) {
+        throw new Error(`Критическая ошибка: Публичный ключ для монеты ${item.coin.puzzle_hash.slice(0, 10)}... не найден!`)
       }
-
-      // Проверка баланса строго по чистой сумме отправки
-      if (accumulatedAmount < required) {
-        throw new Error(`Недостаточно монет на всех адресах кошелька! Набрано: ${accumulatedAmount} / Требуется для отправки: ${required} mojo`)
-      }
-
-      // 2. ФОРМИРОВАНИЕ МАССИВА INPUTS ДЛЯ БЭКЕНДА
-      const inputs = selectedItems.map((item: any) => {
-        const matchedAddressData = walletAddresses.find(
-          (addr: any) => addr.puzzle_hash.toLowerCase() === item.coin.puzzle_hash.toLowerCase()
-        )
-        const coinPkHex = matchedAddressData?.address_pubkey_hex
-
-        if (!coinPkHex) {
-          throw new Error(`Критическая ошибка: Публичный ключ для монеты ${item.coin.puzzle_hash.slice(0, 10)}... не найден!`)
-        }
-
-        return {
-          coin_pk_hex: coinPkHex,
-          coin_to_spend: item.coin,
-          wallet_index: item.wallet_index 
-        }
-      })
-
-      // Запоминаем локальный снапшот (walletIndex первой ведущей монеты)
-      const snapshot: LocalSnapshot & { walletIndex: number } = {
-        targetAddress: targetAddress.trim(),
-        mojosToSend: totalMojosToSend,
-        feeMojos: totalFeeMojos,
-        walletIndex: selectedItems[0].wallet_index
-      }
-      setLocalSnapshot(snapshot)
-
-      console.log("========= 🟩 ФРОНТЕНД: ПОРЯДКОВЫЙ ПУЛ МОНЕТ (БЕЗ УЧЕТА КОМИССИЙ НА ФРОНТЕ) =========");
-      inputs.forEach((item: any, idx: number) => {
-        console.log(`[Инпут #${idx}] Index: ${item.wallet_index} | Amount: ${item.coin_to_spend.amount} | Parent: ${item.coin_to_spend.parent_coin_info.slice(0, 16)}...`);
-      });
-      console.log("========================================================================\n");
-
-      // 3. ОТПРАВКА НА БЭКЕНД
-      const res = await fetch("api/v1/transactions/build-spend-bundle", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          inputs: inputs, 
-          send_to_address: snapshot.targetAddress,
-          mojos_to_send: snapshot.mojosToSend,
-          fee_mojos: snapshot.feeMojos // Передаем значение комиссии чисто информативно, бэк сам применит его внутри спенд-бандла
-        })
-      })
-
-      const result = await res.json()
-      console.log("📥 [КОНСОЛЬ-ЛОГ] Ответ бэка на Шаге 1:", result)
-      if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить транзакцию")
 
       return {
-        ...result,
+        coin_pk_hex: coinPkHex,
+        coin_to_spend: item.coin,
+        wallet_index: item.wallet_index
       }
-    },
-    onSuccess: (data) => {
-      console.log("➡️ [ШАГ 1] Данные успешно получены с бэкенда:", data)
-      setPreparedSpendData(data)
-      setStep(2)
-      setStatusMessage("")
-    },
-    onError: (err: any) => {
-      setStatusMessage(`❌ Ошибка подготовки: ${err.message || err}`)
-      setLocalSnapshot(null)
-    }
-  })
+    })
 
+    // Запоминаем локальный снапшот (walletIndex первой ведущей монеты)
+    const snapshot: LocalSnapshot & { walletIndex: number } = {
+      targetAddress: targetAddress.trim(),
+      mojosToSend: totalMojosToSend,
+      feeMojos: totalFeeMojos,
+      walletIndex: selectedItems[0].wallet_index
+    }
+    setLocalSnapshot(snapshot)
+
+    console.log("========= 🟩 ФРОНТЕНД: ПОРЯДКОВЫЙ ПУЛ МОНЕТ (БЕЗ УЧЕТА КОМИССИЙ НА ФРОНТЕ) =========");
+    inputs.forEach((item: any, idx: number) => {
+      console.log(`[Инпут #${idx}] Index: ${item.wallet_index} | Amount: ${item.coin_to_spend.amount} | Parent: ${item.coin_to_spend.parent_coin_info.slice(0, 16)}...`);
+    });
+    console.log("========================================================================\n");
+
+    // 3. ОТПРАВКА НА БЭКЕНД
+    const res = await fetch("api/v1/transactions/build-spend-bundle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        inputs: inputs,
+        send_to_address: snapshot.targetAddress,
+        mojos_to_send: snapshot.mojosToSend,
+        fee_mojos: snapshot.feeMojos // Передаем значение комиссии чисто информативно, бэк сам применит его внутри спенд-бандла
+      })
+    })
+
+    const result = await res.json()
+    console.log("📥 [КОНСОЛЬ-ЛОГ] Ответ бэка на Шаге 1:", result)
+    if (!res.ok || !result.success) throw new Error(result.detail || "Не удалось подготовить транзакцию")
+
+    return {
+      ...result,
+    }
+  },
+  onSuccess: (data) => {
+    console.log("➡️ [ШАГ 1] Данные успешно получены с бэкенда:", data)
+    setPreparedSpendData(data)
+    setStep(2)
+    setStatusMessage("")
+  },
+  onError: (err: any) => {
+    setStatusMessage(`❌ Ошибка подготовки: ${err.message || err}`)
+    setLocalSnapshot(null)
+  }
+})
 
 
   const sendTxMutation = useMutation({
@@ -218,7 +204,7 @@ export function useSendTransaction({
       const minimumAllowedMojo = localSnapshot.mojosToSend * 0.9
       if (backendTargetMojo < minimumAllowedMojo) {
         console.error(`❌ АТАКА НА КОМИССИИ: Получателю долетает слишком мало! Назначено: ${backendTargetMojo}, Минимум: ${minimumAllowedMojo}`)
-        throw new Error("Критическая ошибка: Суммарные комиссии превысили порог в 10% от суммы отправки!")
+        throw new Error("Критическая ошибка: Суммарные комиссии превышили порог в 10% от суммы отправки!")
       }
       console.log("💪 Снапшот-аудит и защита от проскальзывания пройдены успешно!")
       // 3. ДЕТАЛЬНОЕ ПОДПИСАНИЕ С АБСОЛЮТНОЙ СИНХРОНИЗАЦИЕЙ ИНДЕКСОВ CHIA
@@ -282,6 +268,15 @@ export function useSendTransaction({
         messages_signed_hex: flatMessagesList
       }
 
+      // 🛡️ 🎯 ПРОВЕРКА ОТ ДАБЛ-КЛИКА ПЕРЕД ОТПРАВКОЙ НА СЕРВЕР
+      const transactionFingerprint = flatMessagesList.join("|")
+      if (sentTransactionsRef.current.has(transactionFingerprint)) {
+        console.warn("⚠️ [БЛОКИРОВКА] Попытка повторной отправки дублирующего запроса!")
+        throw new Error("Вы уже подписали и отправили эту транзакцию. Дождитесь ответа ноды.")
+      }
+      // Фиксируем отправку в ref
+      sentTransactionsRef.current.add(transactionFingerprint)
+
       setStatusMessage("🚀 Отправка пакета трат в сеть...")
 
       const res = await fetch("/api/v1/transactions/send-tx", {
@@ -294,6 +289,8 @@ export function useSendTransaction({
       console.log("📥 [КОНСОЛЬ-ЛОГ] Финальный ответ бэка на Шаге 2:", result)
 
       if (!res.ok || !result.success) {
+        // Если нода вернула ошибку, снимаем блок из ref, чтобы можно было попробовать снова
+        sentTransactionsRef.current.delete(transactionFingerprint)
         throw new Error(result.error || result.detail || "Нода отклонила транзакцию")
       }
       return result
@@ -306,12 +303,25 @@ export function useSendTransaction({
     },
     onError: (err: any) => {
       console.error("❌ Ошибка на Шаге 2 во фронтенде:", err)
+
+      // 1. 🛡️ ФИКС ЗАВИСАНИЯ СТАТУСА: Снимаем зависший текст загрузки и выводим текст ошибки
+      setStatusMessage(`❌ Ошибка: ${err.message || "Транзакция отклонена"}`)
+
+      // 2. 🔐 СНЯТИЕ БЛОКИРОВКИ КЛИКА: Если спенды были, гарантированно вычищаем отпечаток из ref,
+      // чтобы юзер мог исправить данные/ПИН и отправить форму повторно без перезагрузки страницы
+      if (preparedSpendData?.coin_spends) {
+        const transactionFingerprint = preparedSpendData.coin_spends
+          .map((cs: any) => cs.message_to_sign_hex)
+          .join("|")
+        sentTransactionsRef.current.delete(transactionFingerprint)
+      }
+
+      // 3. Сброс состояния ввода
       const nextAttempts = pinAttempts + 1
       setPinAttempts(nextAttempts)
       setPin("")
     }
   })
-
 
 
 

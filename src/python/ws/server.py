@@ -20,10 +20,22 @@ class ConnectionManager:
             "status": "WAITING_FOR_NODE_CONNECT"
         }
 
+    async def trigger_home_fetch(self):
+        """Вспомогательный метод для пинка домашнего моста"""
+        if self.home_node:
+            try:
+                await self.home_node.send_json({"type": "REQUEST_FETCH_STATE"})
+                print("[📤 WS-СЕРВЕР] Отправлен запрос REQUEST_FETCH_STATE в сторону моста")
+            except Exception as e:
+                print(f"[⚠️ WS-СЕРВЕР] Не удалось пинуть хоум-бридж: {e}")
+
     async def connect_home(self, websocket: WebSocket):
         await websocket.accept()
         self.home_node = websocket
         print("[⚡ WS-СЕРВЕР] Домашний скрипт-мост УСПЕШНО АВТОРИЗОВАН!")
+        
+        # 🌟 МГНОВЕННЫЙ ПИНК: Мост только что зашел в сеть — сразу требуем актуальный стейт
+        await self.trigger_home_fetch()
 
     def disconnect_home(self):
         self.home_node = None
@@ -34,6 +46,11 @@ class ConnectionManager:
         await websocket.accept()
         self.active_clients.add(websocket)
         print(f"[👤 WS-СЕРВЕР] Подключился клиент сайта. Всего онлайн: {len(self.active_clients)}")
+        
+        # 🌟 ОПТИМИЗАЦИЯ ИНИЦИАЛИЗАЦИИ: Если у сервера в памяти нет валидного блока ноды,
+        # пинаем мост, чтобы он обновил данные для нового юзера прямо сейчас.
+        if not self.current_node_state.get("success") or "blockchain_state" not in self.current_node_state:
+            await self.trigger_home_fetch()
         
         payload = dict(self.current_node_state)
         payload["updatedAt"] = int(time.time() * 1000)

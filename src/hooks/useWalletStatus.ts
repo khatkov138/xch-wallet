@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, skipToken } from '@tanstack/react-query';
-import { SocketPayload } from './useWalletWs';
+import { SocketPayload, QUERY_KEY } from './useWalletWs';
 
 export interface DerivedNodeStatus {
   network: string;
@@ -16,7 +16,6 @@ export interface DerivedNodeStatus {
   mempoolSize: number;
 }
 
-// Плоский результирующий интерфейс хука для мемоизации
 interface WalletStatusResult {
   isPythonDown: boolean;
   isRpcDown: boolean;
@@ -26,18 +25,18 @@ interface WalletStatusResult {
   nodeData: DerivedNodeStatus | null;
 }
 
-const QUERY_KEY = ['chiaNodeStatusCombined'];
-
 export function useWalletStatus(): WalletStatusResult {
-  // 🎯 ФИКС: Переносим ВСЮ деривацию и логику флагов в селектор.
-  // Компонент будет ререндериться ТОЛЬКО тогда, когда изменится конечный результат вычислений!
   return useQuery<SocketPayload, Error, WalletStatusResult>({
     queryKey: QUERY_KEY,
     queryFn: skipToken,
     staleTime: Infinity,
     gcTime: Infinity,
     select: (rawPayload) => {
-      // Этот блок выполняется только при реальном изменении rawPayload в кэше
+      // 1. Извлекаем ошибки, которые useWalletWs.ts атомарно записал в кэш
+      const isPythonDown = rawPayload?.error === 'PYTHON_DOWN';
+      const isRpcDown = rawPayload?.error === 'RPC_DOWN';
+      const hasError = isPythonDown || isRpcDown;
+
       let nodeData: DerivedNodeStatus | null = null;
 
       if (rawPayload?.blockchain_state) {
@@ -78,23 +77,27 @@ export function useWalletStatus(): WalletStatusResult {
 
       const isNotSynced = nodeData ? !nodeData.isSynced : false;
 
-     
+      // 2. ЖЕСТКИЙ КОНТРОЛЬ LOADING: Загрузка идет только если нет ошибок И нет данных блокчейна
+      const isLoading = !hasError && !rawPayload?.blockchain_state;
+
       return {
-        isPythonDown: false, // Флаги ошибок обрабатываются через status, вычисляем ниже по цепочке или оставляем дефолт
-        isRpcDown: false,
+        isPythonDown,
+        isRpcDown,
         isNotSynced,
-        hasError: false,
-        isLoading: rawPayload === undefined,
+        hasError,
+        isLoading,
         nodeData,
       };
     },
   }).data ?? {
-    // Дефолтный стейт на случай, если данных вообще нет в кэше (например, до старта сокета)
-    isPythonDown: false,
+    // 3. ИНИЦИАЛИЗАЦИЯ ПРИ ХОЛОДНОМ СТАРТЕ (до первого ответа сокета):
+    // Если сокет лежит изначально (ERR_CONNECTION_REFUSED), кэш будет undefined.
+    // Вместо вечного лоадинга сразу выставляем оффлайн-стейт.
+    isPythonDown: true, 
     isRpcDown: false,
     isNotSynced: false,
-    hasError: false,
-    isLoading: true,
+    hasError: true,
+    isLoading: false, // Лоадинг заглушен
     nodeData: null,
   };
 }

@@ -27,11 +27,11 @@ export interface ChiaBlockchainState {
   peak: ChiaBlockPeak | null;
 }
 
-// Новый формат пакета транзитного WS-сервера
+// Новый формат пакета транзитного WS-сервера + наши внутренние флаги ошибок для кэша
 export interface SocketPayload {
   success: boolean;
   type?: 'NODE_RAW_UPDATE';
-  error?: 'NODE_OFFLINE' | 'WAITING_FOR_NODE_CONNECT' | string;
+  error?: 'NODE_OFFLINE' | 'WAITING_FOR_NODE_CONNECT' | 'PYTHON_DOWN' | 'RPC_DOWN' | string;
   networkName?: string;
   blockchain_state?: ChiaBlockchainState;
   updatedAt: number;
@@ -48,21 +48,21 @@ export function useWalletWs() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
+    // Паттерн stale-while-error: пишем ошибку прямо в структуру данных, сохраняя старый блокчейн стейт
     const setQueryError = (errorType: 'PYTHON_DOWN' | 'RPC_DOWN') => {
       console.warn(`[🚨 WALLET-WS] Системная ошибка: ${errorType}`);
-      const queryCache = queryClient.getQueryCache();
-      const query = queryCache.find({ queryKey: QUERY_KEY });
       
-      if (query) {
-        query.setState({
-          // Паттерн stale-while-error: сохраняем старые данные, чтобы предотвратить Layout Shift
-          data: query.state.data, 
-          error: new Error(errorType),
-          status: 'error',
-          errorUpdateCount: query.state.errorUpdateCount + 1,
-        });
-        queryCache.notify({ type: 'observerResultsUpdated', query });
-      }
+      queryClient.setQueryData<SocketPayload | undefined>(QUERY_KEY, (oldData) => {
+        return {
+          success: false,
+          type: 'NODE_RAW_UPDATE',
+          error: errorType,
+          updatedAt: Date.now(),
+          // Сохраняем старые данные ноды, если они были, предотвращая Layout Shift
+          networkName: oldData?.networkName,
+          blockchain_state: oldData?.blockchain_state,
+        };
+      });
     };
 
     const connect = () => {
@@ -79,17 +79,14 @@ export function useWalletWs() {
 
       wsRef.current.onopen = () => {
         console.log('[✅ WALLET-WS] Соединение успешно установлено');
-        const queryCache = queryClient.getQueryCache();
-        const query = queryCache.find({ queryKey: QUERY_KEY });
-        
-        if (query) {
-          // Сбрасываем ошибку без триггера скелетонов загрузки
-          query.setState({ 
-            error: null, 
-            status: 'success' 
-          });
-          queryCache.notify({ type: 'observerResultsUpdated', query });
-        }
+        // При успешном коннекте очищаем ошибку в кэше, если данных ещё нет — селектор сам поймет статус загрузки
+        queryClient.setQueryData<SocketPayload | undefined>(QUERY_KEY, (oldData) => {
+          if (!oldData) return undefined;
+          return {
+            ...oldData,
+            error: undefined // Сбрасываем ошибку
+          };
+        });
       };
 
       wsRef.current.onmessage = (event) => {

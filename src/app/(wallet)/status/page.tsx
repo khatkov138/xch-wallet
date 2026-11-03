@@ -175,11 +175,11 @@ export default function StatusPage() {
 
           <MetricsGrid
             blocksPerMinute={blocksPerMinute}
-            totalPeers={nodeData.totalPeers}
+            totalPeers={0}
           />
 
           <TrafficList
-            peersList={nodeData.peersList || []}
+            peersList={ []}
           />
         </div>
       )}
