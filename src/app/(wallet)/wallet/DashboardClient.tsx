@@ -46,7 +46,7 @@ export default function DashboardClient() {
 
     const walletState = checkInitialState()
     if (walletState === "NO_WALLET") {
-      router.replace("/auth")
+      router.replace("/wallet/auth")
     } else {
       setAuthChecked(true)
     }

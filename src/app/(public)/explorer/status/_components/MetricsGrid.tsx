@@ -2,13 +2,19 @@
 
 import React from "react"
 import { Layers } from "lucide-react"
+import { DerivedNodeStatus } from "@/hooks/useWalletStatus"
 
 interface MetricsGridProps {
+  nodeData?: DerivedNodeStatus | null; // Делаем опциональным, чтобы не ломать обратную совместимость
   blocksPerMinute: number;
   totalPeers: number;
 }
 
-export function MetricsGrid({ blocksPerMinute, totalPeers }: MetricsGridProps) {
+export function MetricsGrid({ nodeData, blocksPerMinute, totalPeers }: MetricsGridProps) {
+  // Если у нас в будущем появятся реальные пиры из `nodeData`, хук сможет их забрать отсюда, 
+  // а пока используем переданный `totalPeers` (или 0)
+  const displayPeers = totalPeers;
+
   return (
     <div className="space-y-2.5">
       {/* 🎯 Шапка группы элементов один в один как над "Последняя активность" */}
@@ -40,7 +46,7 @@ export function MetricsGrid({ blocksPerMinute, totalPeers }: MetricsGridProps) {
           </div>
           {/* 🎯 ИСПРАВЛЕНО: Гладкий, плотный шрифт цифр, как в суммах XCH */}
           <div className="text-sm font-black text-zinc-200 tracking-tight leading-none">
-            {totalPeers} <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wide">peers</span>
+            {displayPeers} <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wide">peers</span>
           </div>
         </div>
 

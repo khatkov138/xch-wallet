@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, skipToken } from '@tanstack/react-query';
-import { SocketPayload, QUERY_KEY } from './useWalletWs';
+import { SocketPayload, QUERY_KEY, PeerInfo } from './useWalletWs';
 
 export interface DerivedNodeStatus {
   network: string;
@@ -14,6 +14,8 @@ export interface DerivedNodeStatus {
   networkSpaceTib: string;
   peakTime: string | null;
   mempoolSize: number;
+  peersList: PeerInfo[];
+  totalPeers: number;
 }
 
 interface WalletStatusResult {
@@ -31,73 +33,53 @@ export function useWalletStatus(): WalletStatusResult {
     queryFn: skipToken,
     staleTime: Infinity,
     gcTime: Infinity,
-    select: (rawPayload) => {
-      // 1. Извлекаем ошибки, которые useWalletWs.ts атомарно записал в кэш
-      const isPythonDown = rawPayload?.error === 'PYTHON_DOWN';
-      const isRpcDown = rawPayload?.error === 'RPC_DOWN';
+    select: (raw) => {
+      const isPythonDown = raw?.error === 'PYTHON_DOWN';
+      const isRpcDown = raw?.error === 'RPC_DOWN';
       const hasError = isPythonDown || isRpcDown;
-
+      const peersList = raw?.peersList ?? [];
+      
       let nodeData: DerivedNodeStatus | null = null;
 
-      if (rawPayload?.blockchain_state) {
-        const state = rawPayload.blockchain_state;
-        const sync = state.sync;
-        const peak = state.peak;
-
-        const currentHeight = peak?.height ?? 0;
+      if (raw?.type === 'NODE_SYNCING_STATUS' && raw.syncData) {
+        const sync = raw.syncData;
+        const st = raw.blockchain_state;
+        nodeData = {
+          network: raw.networkName ?? 'unknown', isSynced: false, isSyncingMode: true,
+          currentHeight: sync.progress, targetHeight: sync.target, progressPercent: sync.percent.toFixed(4),
+          difficulty: st ? Number(st.difficulty ?? 0) : 0, networkSpaceTib: st ? String(st.space ?? '0') : '0',
+          mempoolSize: st ? Number(st.mempool_size ?? 0) : 0, peakTime: null, peersList, totalPeers: peersList.length
+        };
+      } else if (raw?.blockchain_state) {
+        const st = raw.blockchain_state;
+        const sync = st.sync;
+        const currentHeight = st.peak?.height ?? 0;
         let targetHeight = currentHeight;
         let progressPercent = '100.0000';
 
         if (!sync.synced) {
           const tip = sync.sync_tip_height ?? 0;
           targetHeight = tip > 0 ? tip : currentHeight;
-          progressPercent = targetHeight > 0 
-            ? ((currentHeight / targetHeight) * 100).toFixed(4) 
-            : '0.0000';
+          progressPercent = targetHeight > 0 ? ((currentHeight / targetHeight) * 100).toFixed(4) : '0.0000';
         }
 
-        const ts = peak?.timestamp;
-        const peakTime = ts && ts > 0 
-          ? new Date(ts * 1000).toISOString().replace('+00:00', 'Z') 
-          : null;
+        const ts = st.peak?.timestamp;
+        const peakTime = ts && ts > 0 ? new Date(ts * 1000).toISOString().replace('+00:00', 'Z') : null;
 
         nodeData = {
-          network: rawPayload.networkName ?? 'unknown',
-          isSynced: !!sync.synced,
-          isSyncingMode: !!sync.sync_mode || (!sync.synced && currentHeight < targetHeight),
-          currentHeight,
-          targetHeight,
-          progressPercent,
-          difficulty: Number(state.difficulty ?? 0),
-          networkSpaceTib: String(state.space ?? '0'),
-          mempoolSize: Number(state.mempool_size ?? 0),
-          peakTime,
+          network: raw.networkName ?? 'unknown', isSynced: !!sync.synced, isSyncingMode: !!sync.sync_mode,
+          currentHeight, targetHeight, progressPercent, difficulty: Number(st.difficulty ?? 0),
+          networkSpaceTib: String(st.space ?? '0'), mempoolSize: Number(st.mempool_size ?? 0),
+          peakTime, peersList, totalPeers: peersList.length
         };
       }
 
-      const isNotSynced = nodeData ? !nodeData.isSynced : false;
-
-      // 2. ЖЕСТКИЙ КОНТРОЛЬ LOADING: Загрузка идет только если нет ошибок И нет данных блокчейна
-      const isLoading = !hasError && !rawPayload?.blockchain_state;
-
       return {
-        isPythonDown,
-        isRpcDown,
-        isNotSynced,
-        hasError,
-        isLoading,
-        nodeData,
+        isPythonDown, isRpcDown, isNotSynced: nodeData ? !nodeData.isSynced : false, hasError,
+        isLoading: !hasError && !(raw?.blockchain_state || raw?.syncData), nodeData
       };
     },
   }).data ?? {
-    // 3. ИНИЦИАЛИЗАЦИЯ ПРИ ХОЛОДНОМ СТАРТЕ (до первого ответа сокета):
-    // Если сокет лежит изначально (ERR_CONNECTION_REFUSED), кэш будет undefined.
-    // Вместо вечного лоадинга сразу выставляем оффлайн-стейт.
-    isPythonDown: true, 
-    isRpcDown: false,
-    isNotSynced: false,
-    hasError: true,
-    isLoading: false, // Лоадинг заглушен
-    nodeData: null,
+    isPythonDown: true, isRpcDown: false, isNotSynced: false, hasError: true, isLoading: false, nodeData: null
   };
 }

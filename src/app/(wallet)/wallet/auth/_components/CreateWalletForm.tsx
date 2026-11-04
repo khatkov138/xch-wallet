@@ -22,9 +22,7 @@ export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
   const [isLocked, setIsLocked] = useState(false)
   const [subtitle, setSubtitle] = useState("Для защиты ключей и подтверждения операций")
 
-  useEffect(() => {
-    router.prefetch("/dashboard")
-  }, [router])
+ 
 
   const handlePinComplete = async (pin: string, clearPin: () => void) => {
     setIsLocked(true)
@@ -43,7 +41,7 @@ export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
           await createNewWallet(phraseToEncrypt, pin)
 
           // Прямой роуш-пуш без транзишна, как ты и просил
-          router.push("/dashboard")
+          router.push("/wallet")
           
         } catch (err: any) {
           console.error("❌ Криптографическая ошибка при шифровании фразы:", err)

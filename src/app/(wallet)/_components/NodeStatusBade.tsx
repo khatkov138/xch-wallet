@@ -52,7 +52,7 @@ export function NodeStatusBadge() {
 
   return (
     <Link
-      href="/status"
+      href="/explorer/status"
       className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-400 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase"
       title="Открыть панель мониторинга сети Chia"
     >

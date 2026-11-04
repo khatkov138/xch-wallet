@@ -72,7 +72,7 @@ export function WalletHeaderContainer() {
 
   const handleLogout = useCallback(() => {
     hardResetWallet()
-    window.location.href = "/auth"
+    window.location.href = "/"
   }, [hardResetWallet])
 
   return (

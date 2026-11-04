@@ -57,7 +57,7 @@ export const WalletHeader = React.memo(function WalletHeader({
         
         {/* Кнопка статуса: Всегда отрендерена. Если статус неизвестен — пишет Loading... */}
         <Link
-          href="/status"
+          href="/explorer/status"
           className={`text-[10px] font-bold border px-2.5 py-0.5 rounded-full flex items-center gap-1.5 transition-all duration-200 cursor-pointer active:scale-95 ${activeBadgeClass}`}
           title="Open network status node monitor"
         >
