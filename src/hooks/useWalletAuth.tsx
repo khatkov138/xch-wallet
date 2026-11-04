@@ -35,12 +35,11 @@ export function useWalletAuth() {
   }, [startSession, setVerifying])
 
   /**
-   * 🛡️ НОВЫЙ МЕТОД: Создание и шифрование кошелька с жесткой очисткой памяти
+   * 🛡️ Создание и шифрование кошелька с жесткой очисткой памяти
    */
   const createNewWallet = useCallback(async (rawPhrase: string, pinCode: string): Promise<void> => {
     setVerifying(true)
-    
-    // Создаем изменяемые ссылки для возможности их очистки в finally
+
     let cleanPhrase: string | null = rawPhrase.trim().toLowerCase().replace(/\s+/g, " ")
     let pubKey: string | null = null
     let encryptedData: any = null
@@ -48,7 +47,6 @@ export function useWalletAuth() {
     try {
       const wordsCount = cleanPhrase.split(" ").filter(Boolean).length
 
-      // Поддерживаем стандарты Chia (12 или 24 слова)
       if (wordsCount !== 24 && wordsCount !== 12) {
         throw new Error("Фраза повреждена: должно быть 12 или 24 слова")
       }
@@ -75,11 +73,14 @@ export function useWalletAuth() {
       encryptedData = null
       setVerifying(false)
     }
-  }, [startSession, setVerifying])
+  }, [startSession, setVerifying, vault])
 
   /**
-   * 🔓 Разблокировка экрана приложения
+   * 🔓 Разблокировка экрана приложения через PIN
    */
+  /**
+  * 🔓 Разблокировка экрана приложения через PIN
+  */
   const unlockWithPin = useCallback(async (pinCode: string): Promise<boolean> => {
     setVerifying(true)
     let clearMnemonic: string | null = null
@@ -93,12 +94,16 @@ export function useWalletAuth() {
 
       startSession(pubKey, SESSION_TIMEOUT)
       return true
+    } catch (error) {
+      console.error("❌ Неверный PIN-код:", error)
+      return false
     } finally {
       clearMnemonic = null
       pubKey = null
       setVerifying(false)
     }
   }, [startSession, setVerifying])
+
 
   /**
    * 🔐 Изолированное получение фразы для подписи транзакций
@@ -111,38 +116,36 @@ export function useWalletAuth() {
   }, [])
 
   /**
-   * 🕒 Проверка состояния сессии при инициализации
+   * 🕒 Проверка состояния сессии при инициализации (ЧИСТАЯ ФУНКЦИЯ)
+   * Возвращает статус строкой, не вызывая немедленных сайд-эффектов мутации Zustand
    */
   const checkInitialState = useCallback(() => {
     const { hasWallet: diskHasWallet } = useSecureStorage.getState()
     const { unhardenedPkHex: activePkHex, expiresAt } = useWalletSession.getState()
 
+    // 1. Кошелька вообще нет на диске (IndexedDB / LocalStorage пуст)
     if (!diskHasWallet) {
-      setScreenLocked(false)
-      setVerifying(false)
       return "NO_WALLET"
     }
 
+    // 2. Кошелек есть, но активная сессия в оперативной памяти пуста
     if (!activePkHex || !expiresAt) {
-      setScreenLocked(true)
-      setVerifying(false)
       return "NEED_UNLOCK"
     }
 
+    // 3. Время сессии истекло по таймеру простоя
     if (Date.now() > expiresAt) {
-      endSessionFromStore()
-      setScreenLocked(true)
+      endSessionFromStore() // Сброс сессии в хранилище RAM
       return "NEED_UNLOCK"
     }
 
-    setScreenLocked(false)
-    setVerifying(false)
+    // 4. Пользователь успешно авторизован, ключи в RAM
     return "AUTHORIZED"
-  }, [setScreenLocked, setVerifying, endSessionFromStore])
+  }, [endSessionFromStore])
 
   return {
     loginWithClearMnemonic,
-    createNewWallet, // Экспортируем новый метод
+    createNewWallet,
     unlockWithPin,
     getMnemonicForSigning,
     checkInitialState,

@@ -14,7 +14,6 @@ import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
 import { UnlockPinForm } from "./UnlockPinForm"
 import { useIdleTimer } from "@/hooks/useIdleTimer"
 import { BackupCard } from "./_components/BackupCard"
-import WalletGlobalLoading from "../loading"
 import { SendModal } from "./_components/send-modal/SendModal"
 
 export default function DashboardClient() {
@@ -22,57 +21,51 @@ export default function DashboardClient() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
   const [isSendOpen, setIsSendOpen] = useState(false)
 
-  // Локальный охранный стейт, чтобы предотвратить вспышки и дергания контента (CLS = 0)
+  // Флаг того, что первичный охранный чек завершен
   const [authChecked, setAuthChecked] = useState(false)
 
   const { checkInitialState } = useWalletAuth()
 
-  console.log("dashboardclient")
-
-  // Атомарные селекторы из хранилищ
+  // Достаем стейты и методы изменения экранов
   const isScreenLocked = useWalletSession((state) => state.isScreenLocked)
   const isVerifying = useWalletSession((state) => state.isVerifying)
+  const setScreenLocked = useWalletSession((state) => state.setScreenLocked)
+  const setVerifying = useWalletSession((state) => state.setVerifying)
+
   const sessionHydrated = useWalletSession((state) => state._hasHydrated)
   const secureHydrated = useSecureStorage((state) => state._hasHydrated)
-
   const isHydrated = sessionHydrated && secureHydrated
 
   // Тяжелые фоновые хуки простоя экрана
   useIdleTimer()
 
-  // 🛡️ ЕДИНЫЙ БЕЗОПАСНЫЙ ЭФФЕКТ: Проверяем ключи в RAM строго ПОСЛЕ монтирования, а не в рендере
+  // 🛡️ ЕДИНЫЙ УМНЫЙ ЭФФЕКТ: Проверяем статус и выставляем флаги ПОСЛЕ загрузки хранилищ
   useEffect(() => {
-    if (!isHydrated || isVerifying) return
+    if (!isHydrated) return
 
     const walletState = checkInitialState()
+
     if (walletState === "NO_WALLET") {
+      setScreenLocked(false)
+      setVerifying(false)
       router.replace("/wallet/auth")
-    } else {
-      setAuthChecked(true)
+    } else if (walletState === "NEED_UNLOCK") {
+      setScreenLocked(true)
+      setVerifying(false)
+      setAuthChecked(true) // Чек завершен, мы знаем что нужно показать форму ввода пина
+    } else if (walletState === "AUTHORIZED") {
+      setScreenLocked(false)
+      setVerifying(false)
+      setAuthChecked(true) // Чек завершен, пускаем в дашборд
     }
-  }, [isHydrated, isVerifying, checkInitialState, router])
+  }, [isHydrated, checkInitialState, router, setScreenLocked, setVerifying])
 
-  // Регулярный интервал проверки валидности сессии
-  useEffect(() => {
-    if (isScreenLocked || !isHydrated || isVerifying || !authChecked) return
-
-    const interval = setInterval(() => {
-      if (checkInitialState() === "NO_WALLET") {
-        router.replace("/auth")
-      }
-    }, 5000)
-
-    return () => clearInterval(interval)
-  }, [isScreenLocked, isHydrated, isVerifying, authChecked, checkInitialState, router])
-
-  // 🛡️ Жесткий расчет загрузки: Пока идет проверка или гидратация — контент ЗАБЛОКИРОВАН
-  const isLoading = !isHydrated || isVerifying || !authChecked
-
-  if (isLoading) {
-    return <WalletGlobalLoading />
+  // Если базы Zustand еще грузятся с диска или мы не распределили первичный роутинг — стоим на системном loading.tsx
+  if (!isHydrated || !authChecked) {
+    return null
   }
 
-  // Экран блокировки сессии (встает вместо контента)
+  // Экран блокировки сессии (встает вместо контента, если сессия залочена)
   if (isScreenLocked) {
     return (
       <div className="w-full py-12 animate-in fade-in duration-200">
@@ -81,7 +74,7 @@ export default function DashboardClient() {
     )
   }
 
-  // Основной контент дашборда кошелька (твоя оригинальная верстка без изменений)
+  // Основной контент дашборда кошелька
   return (
     <>
       <div className="w-full space-y-6 animate-in fade-in duration-300">
