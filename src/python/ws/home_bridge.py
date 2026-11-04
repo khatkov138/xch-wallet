@@ -1,13 +1,18 @@
 import sys, asyncio, json, ssl, os, websockets, httpx
 from pathlib import Path
+
 CURRENT_FILE = Path(__file__).resolve()
-sys.path.append(str(CURRENT_FILE.parent.parent))
+if str(CURRENT_FILE.parent.parent) not in sys.path:
+    sys.path.append(str(CURRENT_FILE.parent.parent))
+
 from shared import get_ssl_credentials, BASE_RPC_URL
 
 CHIA_WS_URL, ALLOWED_NETWORKS = "wss://localhost:55400", {"mainnet", "testnet11"}
 VPS_HOST = os.getenv("VPS_HOST", "localhost")
-SECRET_BRIDGE_TOKEN = os.getenv("API_SECRET", "LOCAL_DEV_SECRET_TOKEN_998877")
-VPS_WS_URL = f"ws://{VPS_HOST}:8080/ws/home-node?token={SECRET_BRIDGE_TOKEN}"
+SECRET_BRIDGE_TOKEN = os.getenv("WS", "LOCAL_DEV_SECRET_TOKEN_998877")
+
+# 🎯 ИЗМЕНЕНО: Порт изменен с 8080 на единый порт бэкенда 8000
+VPS_WS_URL = f"ws://{VPS_HOST}:8000/ws/home-node?token={SECRET_BRIDGE_TOKEN}"
 START_MOD_TIME = os.path.getmtime(CURRENT_FILE)
 
 def create_chia_ssl_context():
@@ -57,7 +62,8 @@ async def send_state(vps_ws, net_name, raw_state, crt, key, src="STREAM"):
 
 async def listen_vps(vps_ws, net_name, crt, key):
     try:
-        async for msg in vps_ws:
+        async_iterable = vps_ws
+        async for msg in async_iterable:
             if json.loads(msg).get("type") == "REQUEST_FETCH_STATE":
                 st = await rpc_req("get_blockchain_state", key, crt, 10.0)
                 await send_state(vps_ws, net_name, st.get("blockchain_state") or st, crt, key, "⚡ PUSH")
@@ -65,7 +71,8 @@ async def listen_vps(vps_ws, net_name, crt, key):
 
 async def handle_stream(chia_ws, vps_ws, net_name, crt, key):
     await chia_ws.send(json.dumps({"command": "register_service", "target": "daemon", "destination": "daemon", "origin": "bridge", "request_id": "1", "data": {"service": "wallet_ui"}}))
-    async for msg in chia_ws:
+    async_iterable = chia_ws
+    async for msg in async_iterable:
         ev = json.loads(msg)
         if ev.get("command") == "blockchain_state" or ev.get("origin") == "chia_full_node":
             await send_state(vps_ws, net_name, ev.get("data", {}).get("blockchain_state"), crt, key, "STREAM")

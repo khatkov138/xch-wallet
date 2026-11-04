@@ -1,18 +1,18 @@
 'use client'
 
+import { Background } from "@/components/Background"
 import React from "react"
-import { AuthBackground } from "../(wallet)/_components/AuthBackground"
 
 interface ExplorerLayoutProps {
   children: React.ReactNode
 }
 
-export default function ExplorerLayout({ children }: ExplorerLayoutProps) {
+export default function PublicLayout({ children }: ExplorerLayoutProps) {
   return (
     <div className="relative min-h-screen w-full bg-zinc-950 flex flex-col justify-between z-0">
       {/* Железный фон кошелька — рендерится один раз на всю директорию */}
       <div className="fixed inset-0 w-screen h-screen z-[-1] overflow-hidden pointer-events-none">
-        <AuthBackground />
+        <Background />
       </div>
 
       {/* РАСШИРИЛИ КОНТЕЙНЕР до max-w-6xl, чтобы колонки лендинга встали бок о бок */}

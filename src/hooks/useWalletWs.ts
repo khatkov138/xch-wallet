@@ -51,7 +51,7 @@ export interface SocketPayload {
 }
 
 export const QUERY_KEY = ['chiaNodeStatusCombined'];
-export const WS_URL = 'ws://localhost:8080/ws/client';
+export const WS_URL = 'ws://localhost:8000/ws/client';
 
 export function useWalletWs() {
   const queryClient = useQueryClient();

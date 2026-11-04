@@ -15,7 +15,7 @@ export default function LandingPage() {
           <Link href="/" className="relative bg-zinc-900/40 border border-zinc-850 text-white font-black text-xs px-3 py-1 rounded-xl">XCH<span className="text-[#FF2E93]">IA</span><span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-[#FF2E93]" /></Link>
           <span className="text-[9px] font-black tracking-widest px-2 py-0.5 rounded border text-zinc-500 bg-zinc-900/20 border-zinc-900">TESTNET11</span>
         </div>
-        <Link href="/wallet" className="text-[11px] font-bold uppercase bg-white text-zinc-950 px-3.5 py-1.5 rounded-xl hover:bg-zinc-200 transition-all">Вход</Link>
+        <Link href="/mainnet/wallet" className="text-[11px] font-bold uppercase bg-white text-zinc-950 px-3.5 py-1.5 rounded-xl hover:bg-zinc-200 transition-all">Вход</Link>
       </header>
 
       <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center py-10 lg:py-16 flex-1">
@@ -25,8 +25,8 @@ export default function LandingPage() {
           {/* 🎯 ДОБАВИЛИ КРУТОЙ МЕССЕДЖ ПРО ОТКРЫТЫЙ ИСХОДНЫЙ КОД И GITHUB */}
           <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto lg:mx-0 leading-relaxed font-medium">Ваша случайная фраза из 24 слов и ключи <strong className="text-zinc-200 font-bold">никогда не отправляются на наш сервер</strong>. Наш проект имеет <strong className="text-[#FF2E93] font-bold">полностью открытый исходный код на GitHub</strong> — всё проверяемо и прозрачно. Мы лишь выступаем в роли посыльного между вами и блокчейном Chia.</p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center lg:justify-start pt-2 items-center">
-            <Link href="/wallet" className="w-full sm:w-auto text-[11px] font-black uppercase bg-white text-zinc-950 px-6 py-3.5 rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all shadow-lg shadow-white/5"><span>Открыть веб-кошелек</span> <ChevronRight size={12} /></Link>
-            <Link href="/explorer" className="w-full sm:w-auto text-[11px] font-bold uppercase bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 text-zinc-300 px-5 py-3.5 rounded-xl transition-all">Открыть Explorer</Link>
+            <Link href="/mainnet/wallet" className="w-full sm:w-auto text-[11px] font-black uppercase bg-white text-zinc-950 px-6 py-3.5 rounded-xl flex items-center justify-center gap-1.5 active:scale-98 transition-all shadow-lg shadow-white/5"><span>Открыть веб-кошелек</span> <ChevronRight size={12} /></Link>
+            <Link href="/mainnet/explorer" className="w-full sm:w-auto text-[11px] font-bold uppercase bg-zinc-900/60 hover:bg-zinc-900 border border-zinc-800 text-zinc-300 px-5 py-3.5 rounded-xl transition-all">Открыть Explorer</Link>
           </div>
         </div>
 
@@ -36,7 +36,7 @@ export default function LandingPage() {
               <button onClick={() => setTab('wallet')} className={`px-3 py-1 rounded cursor-pointer ${tab === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Кошелек</button>
               <button onClick={() => setTab('exp')} className={`px-3 py-1 rounded cursor-pointer ${tab === 'exp' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Эксплорер</button>
             </div>
-            <Link href="/explorer" className="text-[9px] font-bold text-zinc-500 hover:text-[#FF2E93] bg-zinc-900/20 px-2 py-1 rounded-md border border-zinc-900">Explorer →</Link>
+            <Link href="/mainnet/explorer" className="text-[9px] font-bold text-zinc-500 hover:text-[#FF2E93] bg-zinc-900/20 px-2 py-1 rounded-md border border-zinc-900">Explorer →</Link>
           </div>
 
           <div className="w-full max-w-[340px] bg-[#0c0c0e] border border-zinc-900 rounded-[24px] p-4 shadow-2xl relative text-left">

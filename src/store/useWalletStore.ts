@@ -4,10 +4,8 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, StateStorage } from 'zustand/middleware'
 import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval'
 
-// Проверяем, находимся ли мы на клиенте (в браузере)
 const isClient = typeof window !== 'undefined'
 
-// 🛡️ 1. КАСТОМНЫЙ ДВИЖОК ДЛЯ INDEXEDDB (С защитой от серверного рендеринга Next.js)
 const indexedDBStorage: StateStorage = {
   getItem: async (name: string): Promise<string | null> => {
     if (!isClient) return null
@@ -23,10 +21,8 @@ const indexedDBStorage: StateStorage = {
   },
 }
 
-// 🛡️ 2. БЕЗОПАСНЫЙ ВЫБОР ДЛЯ СЕССИИ (Используем sessionStorage вместо localStorage)
 const dummyStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} }
 const getSessionStorage = () => (isClient ? sessionStorage : dummyStorage)
-
 
 // ==========================================
 // 1. SECURE STORAGE (Внутри базы данных IndexedDB)
@@ -74,16 +70,18 @@ interface WalletSessionState {
   unhardenedPkHex: string
   isScreenLocked: boolean
   isVerifying: boolean
+  noWalletMode: boolean // 🎯 Добавлено в интерфейс
   expiresAt: number | null
   lastActivityAt: number | null
-  activeIndexes: string // 🎯 Храним строку с живыми индексами балансов: "0,169,170"
+  activeIndexes: string 
   _hasHydrated: boolean
   setHasHydrated: (state: boolean) => void
   startSession: (pkHex: string, timeoutMs: number) => void
   updateActivity: (timeoutMs: number) => void
   setScreenLocked: (status: boolean) => void
   setVerifying: (status: boolean) => void
-  setActiveIndexes: (indexes: string) => void // 🎯 Экшен для обновления активных индексов
+  setNoWalletMode: (status: boolean) => void // 🎯 Добавлено в интерфейс
+  setActiveIndexes: (indexes: string) => void 
   endSession: () => void
 }
 
@@ -93,9 +91,10 @@ export const useWalletSession = create<WalletSessionState>()(
       unhardenedPkHex: '',
       isScreenLocked: true, 
       isVerifying: true,    
+      noWalletMode: false, // 🎯 Инициализация флага стейт-машины
       expiresAt: null,
       lastActivityAt: null,
-      activeIndexes: '', // 🎯 Инициализируем пустой строкой для Heavy-скана при первом запуске
+      activeIndexes: '', 
       _hasHydrated: false,
 
       setHasHydrated: (state) => set({ _hasHydrated: state }),
@@ -106,9 +105,10 @@ export const useWalletSession = create<WalletSessionState>()(
           unhardenedPkHex: pkHex,
           isScreenLocked: false,
           isVerifying: false,
+          noWalletMode: false, // Сбрасываем при успешном старте сессии
           lastActivityAt: now,
           expiresAt: now + timeoutMs,
-          activeIndexes: '' // Сбрасываем при новом входе для полной синхронизации
+          activeIndexes: '' 
         })
       },
 
@@ -123,16 +123,18 @@ export const useWalletSession = create<WalletSessionState>()(
 
       setScreenLocked: (status) => set({ isScreenLocked: status }),
       setVerifying: (status) => set({ isVerifying: status }),
+      setNoWalletMode: (status) => set({ noWalletMode: status }), // 🎯 Сеттер режима
       
-      setActiveIndexes: (indexes) => set({ activeIndexes: indexes }), // 🎯 Обновление стейта индексов
+      setActiveIndexes: (indexes) => set({ activeIndexes: indexes }), 
       
       endSession: () => set({
         unhardenedPkHex: '',
         isScreenLocked: true,
         isVerifying: false,
+        noWalletMode: false, // 🎯 Мягкий сброс стейт-машины при логауте
         expiresAt: null,
         lastActivityAt: null,
-        activeIndexes: '' // 🎯 Очищаем при выходе
+        activeIndexes: '' 
       })
     }),
     {
