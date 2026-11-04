@@ -1,13 +1,19 @@
-import os, httpx, time
+import os
+import httpx
+import time
 from fastapi import APIRouter, HTTPException, Query
 from chia_rs import G1Element
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
-from shared import get_wallet_pk_unhardened, BASE_RPC_URL, get_ssl_credentials
+
+# Импортируем утилиты из shared / config
+from shared import get_wallet_pk_unhardened
+from shared.config import get_network_config
+
 
 wallet_router = APIRouter(prefix="/api/wallet", tags=["Wallets Engine"])
 GAP, MAX_LIM = 40, 1000
 
-async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncClient) -> dict:
+async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncClient, rpc_url: str) -> dict:
     print(f"🚀 [RPC NODE REQUEST] Сканируем пачку индексов: от {min(idxs)} до {max(idxs)} (Всего: {len(idxs)} адресов)")
     
     ph_map, addrs = {}, []
@@ -16,12 +22,9 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
         ph = puzzle_for_pk(wallet_pk).get_tree_hash()
         ph_hex = ph.hex().lower()
         
-        # Переводим G1Element в байты и гекс
         pubkey_hex_string = "0x" + bytes(wallet_pk).hex()
-        
         ph_map[ph_hex] = {"index": i}
         
-        # Добавляем поле address_pubkey_hex строго ОДИН РАЗ на весь адрес!
         addrs.append({
             "index": i, 
             "puzzle_hash": f"0x{ph_hex}", 
@@ -33,7 +36,7 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
         
     try:
         response = await client.post(
-            f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hashes", 
+            f"{rpc_url}/get_coin_records_by_puzzle_hashes", 
             json={"puzzle_hashes": list(ph_map.keys()), "include_spent_coins": True, "start_height": 0},
             timeout=30.0
         )
@@ -51,14 +54,22 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
 
 @wallet_router.get("/dashboard")
 async def get_wallet_dashboard(
-    publicKeyHex: str = Query(...), mode: str = Query("light"), active_indexes: str = Query(None), limit: int = Query(200)
+    publicKeyHex: str = Query(...), 
+    mode: str = Query("light"), 
+    active_indexes: str = Query(None), 
+    limit: int = Query(200),
+    network: str = Query(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
+
 ):
     try:
-        cert, key = get_ssl_credentials()
+        # Извлекаем конфигурацию портов и сертификатов динамически через универсальный модуль конфигурации
+        cfg = get_network_config(network)
+        cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
+        
         master_pk = G1Element.from_bytes(bytes.fromhex(publicKeyHex.replace("0x", "")))
         records, global_map, global_addrs, total_scanned = [], {}, [], 0
         
-        print(f"\n--- 📥 ВХОДЯЩИЙ ЗАПРОС DASHBOARD | Режим: {mode.upper()} | Active Indexes: {active_indexes} ---")
+        print(f"\n--- 📥 ВХОДЯЩИЙ ЗАПРОС DASHBOARD | Сеть: {network.upper()} | Режим: {mode.upper()} | Active Indexes: {active_indexes} ---")
 
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as client:
             if mode == "heavy" or not active_indexes:
@@ -66,7 +77,7 @@ async def get_wallet_dashboard(
                 while cur_start < MAX_LIM:
                     idxs = list(range(cur_start, min(cur_end, MAX_LIM)))
                     if not idxs: break
-                    chunk = await scan_chunk(master_pk, idxs, client)
+                    chunk = await scan_chunk(master_pk, idxs, client, rpc_url)
                     records.extend(chunk["records"])
                     global_map.update(chunk["ph_map"])
                     global_addrs.extend(chunk["addresses"])
@@ -89,7 +100,7 @@ async def get_wallet_dashboard(
                 max_a = max(idxs, default=0)
                 idxs = list(set(base_pool + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
                 
-                chunk = await scan_chunk(master_pk, idxs, client)
+                chunk = await scan_chunk(master_pk, idxs, client, rpc_url)
                 records.extend(chunk["records"])
                 global_map.update(chunk["ph_map"])
                 global_addrs.extend(chunk["addresses"])
@@ -146,17 +157,17 @@ async def get_wallet_dashboard(
                 
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)
         
-        # 🎯 СОРТИРОВКА КОИНОВ: строго по возрастанию wallet_index, 
+        # СОРТИРОВКА КОИНОВ: строго по возрастанию wallet_index, 
         # а внутри одного индекса — по убыванию баланса монеты (крупные UTXO первыми)
         sorted_unspent_coins = sorted(
             unspent_coins_list, 
             key=lambda x: (x["wallet_index"], -int(x["coin"]["amount"]))
         )
         
-        print(f"🏁 [DASHBOARD SUCCESS] Всего опрошено адресов: {total_scanned} | Живых индексов: {sorted(list(active_bal))}\n")
+        print(f"🏁 [DASHBOARD SUCCESS] Сеть: {network.upper()} | Всего опрошено адресов: {total_scanned} | Живых индексов: {sorted(list(active_bal))}\n")
         
         return {
-            "meta": {"mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
+            "meta": {"network": network, "mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
             "balance": {
                 "total_xch": str(total_mojo / 1e12), 
                 "total_mojo": str(total_mojo), 

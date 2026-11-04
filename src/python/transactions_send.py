@@ -2,7 +2,7 @@ import os
 import time
 import hmac
 import httpx
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query, status
 from dotenv import load_dotenv
 from chia_rs import G2Element, SpendBundle, Coin, CoinSpend, Program, AugSchemeMPL
 
@@ -10,19 +10,31 @@ from chia_rs import G2Element, SpendBundle, Coin, CoinSpend, Program, AugSchemeM
 from chia.types.blockchain_format.program import Program as PyProgram
 
 from chia.wallet.puzzles.puzzle_utils import make_create_coin_condition
-from shared import get_ssl_credentials, BASE_RPC_URL, generate_multi_integrity_token
+from shared import generate_multi_integrity_token
+from shared.config import get_network_config
+from pydantic import BaseModel, Field 
 
 load_dotenv()
 tx_router = APIRouter(prefix="/api/v1/transactions", tags=["Transactions Send Engine"])
 
+class SendTxRequest(BaseModel):
+    network: str = Field(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
+    signatures_list: list[str] = Field(..., description="Список BLS подписей в формате hex")
+    coin_spends: list[dict] = Field(..., description="Массив CoinSpend объектов Chia")
+    integrity_token: str = Field(..., description="Токен целостности сессии транзакции")
+    messages_signed_hex: list[str] = Field(..., description="Список хэшей подписанных сообщений")
+
 @tx_router.post("/send-tx")
-async def send_tx(
-    signatures_list: list[str] = Body(..., embed=True),        
-    coin_spends: list[dict] = Body(..., embed=True),            
-    integrity_token: str = Body(..., embed=True), 
-    messages_signed_hex: list[str] = Body(..., embed=True)       
-):
+async def send_tx(payload: SendTxRequest):
     try:
+        # 🎯 КРИТИЧЕСКИЙ ФИКС: Распаковываем переменные из payload,
+        # чтобы весь нижележащий крипто-код и CLVM-раннер не падали с NameError!
+        network = payload.network
+        signatures_list = payload.signatures_list
+        coin_spends = payload.coin_spends
+        integrity_token = payload.integrity_token
+        messages_signed_hex = payload.messages_signed_hex
+
         if not coin_spends:
             raise HTTPException(status_code=400, detail="Список монет пуст!")
 
@@ -45,9 +57,12 @@ async def send_tx(
         if not hmac.compare_digest(generate_multi_integrity_token(messages_signed_hex, reconstructed_coin_spends), integrity_token):
             raise HTTPException(status_code=403, detail="Критическая ошибка: Попытка подмены данных!")
 
+        # Извлекаем конфигурацию портов и SSL динамически на базе выбранной сети
+        cfg = get_network_config(network)
+        cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
+
         # 2. АГРЕГАЦИЯ BLS ПОДПИСЕЙ
         try:
-            cert, key = get_ssl_credentials()
             g2_elements = [G2Element.from_bytes(bytes.fromhex(s.replace("0x", "").strip().lower())) for s in signatures_list]
             aggregated_signature_obj = AugSchemeMPL.aggregate(g2_elements)
         except Exception as sig_err:
@@ -113,9 +128,9 @@ async def send_tx(
         spend_bundle = SpendBundle(final_coin_spends, aggregated_signature_obj)
         tx_id_hex = "0x" + spend_bundle.name().hex()
         
-        # 4. PUSH В RPC НОДУ CHIA
+        # 4. PUSH В RPC НОДУ CHIA С ИСПОЛЬЗОВАНИЕМ ДИНАМИЧЕСКОГО URL И СЕРТИФИКАТОВ СЕТИ
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as client:
-            res = await client.post(f"{BASE_RPC_URL}/push_tx", json={"spend_bundle": spend_bundle.to_json_dict()})
+            res = await client.post(f"{rpc_url}/push_tx", json={"spend_bundle": spend_bundle.to_json_dict()})
             node_response = res.json()
              
         is_success = node_response.get("success", False)
@@ -132,5 +147,7 @@ async def send_tx(
             "node_reply": node_response
         }
             
-    except HTTPException as h: raise h
-    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException as h: 
+        raise h
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,6 +1,6 @@
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
-from shared import get_ssl_credentials, BASE_RPC_URL
+from shared.config import get_network_config
 
 transactions_track_router = APIRouter(prefix="/api/v1/transactions", tags=["Transaction Direct Tracker"])
 
@@ -10,7 +10,9 @@ def clean_hash(h: str) -> str:
 @transactions_track_router.get("/track-tx")
 async def track_transaction(
     tx_id: str = Query(..., alias="txId"),
-    target_coin_id: str = Query(..., alias="targetCoinId")
+    target_coin_id: str = Query(..., alias="targetCoinId"),
+    network: str = Query(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
+
 ):
     """
     Высокоточный атомарный трекер транзакций Chia с расширенными Spacescan-метриками
@@ -26,13 +28,15 @@ async def track_transaction(
                 detail="Параметры txId и targetCoinId не могут быть пустыми!"
             )
         
-        cert, key = get_ssl_credentials()
+        # Динамически извлекаем конфигурацию портов и SSL на базе выбранной сети
+        cfg = get_network_config(network)
+        cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
 
         async with httpx.AsyncClient(verify=False, cert=(cert, key), timeout=5.0) as client:
             
             # 🚀 ФАЗА 1: Проверка эфемерного мемпула ноды Chia
             mempool_res = await client.post(
-                f"{BASE_RPC_URL}/get_mempool_item_by_tx_id",
+                f"{rpc_url}/get_mempool_item_by_tx_id",
                 json={"tx_id": clean_tx_id}
             )
             
@@ -54,7 +58,7 @@ async def track_transaction(
 
             # ⛓️ ФАЗА 2: Проверка появления созданного коина в реестре ноды
             coin_res = await client.post(
-                f"{BASE_RPC_URL}/get_coin_record_by_name",
+                f"{rpc_url}/get_coin_record_by_name",
                 json={"name": clean_coin_id}
             )
             
@@ -72,7 +76,7 @@ async def track_transaction(
                         parent_puzzle_hash = ""
                         if parent_coin_id:
                             parent_res = await client.post(
-                                f"{BASE_RPC_URL}/get_coin_record_by_name",
+                                f"{rpc_url}/get_coin_record_by_name",
                                 json={"name": clean_hash(parent_coin_id)}
                             )
                             if parent_res.status_code == 200:

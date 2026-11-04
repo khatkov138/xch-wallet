@@ -5,6 +5,16 @@ import Link from "next/link"
 import { LogOut, ChevronDown, Check } from "lucide-react"
 import { useWalletStatus } from "@/hooks/useWalletStatus"
 import { useWalletSession } from "@/store/useWalletStore"
+import { useQuery } from "@tanstack/react-query"
+
+const INTERNAL_NEXT_PRICES_API = "/api/nextjs/prices"
+
+interface PricesResponse {
+  success: boolean;
+  source: string;
+  usd: number;
+  rub: number;
+}
 
 interface WalletHeaderProps {
   showLogout: boolean;
@@ -24,9 +34,20 @@ export const WalletHeader = React.memo(function WalletHeader({
   }, [])
 
   const network = useWalletSession((state) => state.network)
+  const currency = useWalletSession((state) => state.currency) // 🎯 Получаем глобальную валюту
   const isMainnet = network === 'mainnet'
 
   const { isLoading, hasError, isConnecting, nodeData } = useWalletStatus()
+
+  // 🎯 Подтягиваем кэшированные сервером цены XCH
+  const { data: marketData } = useQuery<PricesResponse>({
+    queryKey: ["xchMarketPriceNextRouter"],
+    queryFn: async () => {
+      const res = await fetch(INTERNAL_NEXT_PRICES_API);
+      return res.json();
+    },
+    staleTime: 15000
+  });
 
   const currentNetworkName = nodeData?.network?.toLowerCase() ?? ''
   const isCurrentStateForSelectedNetwork = 
@@ -52,16 +73,32 @@ export const WalletHeader = React.memo(function WalletHeader({
     setIsOpen(false)
   }
 
+  // Рендерим отформатированную строку курса на основе глобальной валюты
+  const displayedXchRate = React.useMemo(() => {
+    if (!marketData) return ""
+    if (currency === "RUB") {
+      return `XCH: ${marketData.rub?.toLocaleString("ru-RU", { minimumFractionDigits: 2 })} ₽`
+    }
+    return `XCH: $${marketData.usd?.toFixed(2)}`
+  }, [marketData, currency])
+
   return (
     <header className="flex items-center justify-between w-full h-14 border-b border-zinc-900/40 backdrop-blur-sm bg-zinc-950/10 rounded-xl px-2 relative z-50 select-none">
       
-      <div className="flex items-center select-none">
+      <div className="flex items-center gap-3 select-none">
         <Link 
           href="/" 
           className="relative bg-zinc-900/40 border border-zinc-850 text-white font-black text-xs px-3 py-1 rounded-xl transition-all active:scale-[0.98] cursor-pointer"
         >
           XCH<span className="text-[#FF2E93]">IA</span>
         </Link>
+
+        {/* 🎯 Виджет курса монеты */}
+        {mounted && marketData && (
+          <div className="text-[10px] font-bold text-zinc-400 border border-zinc-900 bg-zinc-900/10 px-2.5 py-1 rounded-xl animate-in fade-in duration-300">
+            {displayedXchRate}
+          </div>
+        )}
       </div>
 
       <div className="flex-1" />
@@ -72,7 +109,6 @@ export const WalletHeader = React.memo(function WalletHeader({
           onClick={() => setIsOpen(!isOpen)}
           className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/80 text-zinc-300 font-bold text-[10px] uppercase tracking-wider px-3.5 py-2 rounded-xl transition-all hover:border-zinc-700 hover:text-white active:scale-[0.97] cursor-pointer"
         >
-          {/* Текст сети рендерится сразу на основе SSR, точка зажигается по mounted флага */}
           <span>{isMainnet ? 'Mainnet' : 'Testnet11'}</span>
           
           <span className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${

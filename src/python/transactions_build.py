@@ -1,7 +1,8 @@
 import os
 import hashlib
 import httpx
-from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel, Field
+from fastapi import APIRouter, Body, HTTPException, Query
 from dotenv import load_dotenv
 from chia_rs import G1Element, Coin, CoinSpend, Program
 from chia.types.blockchain_format.program import Program as PyProgram
@@ -13,36 +14,55 @@ from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import (
     calculate_synthetic_offset
 )
 from chia.wallet.puzzles.puzzle_utils import make_create_coin_condition
-from shared import get_ssl_credentials, fetch_genesis, BASE_RPC_URL, generate_multi_integrity_token
+
+# Импортируем утилиты на новой архитектуре без жестких путей
+from shared import fetch_genesis, generate_multi_integrity_token, get_wallet_pk_unhardened
+from shared.config import get_network_config
 
 load_dotenv()
 tx_router = APIRouter(prefix="/api/v1/transactions", tags=["Transactions Build Engine"])
 
-async def check_node_synced_internal(client: httpx.AsyncClient):
+async def check_node_synced_internal(client: httpx.AsyncClient, rpc_url: str):
     try:
-        res = await client.post(f"{BASE_RPC_URL}/get_blockchain_state", json={})
+        res = await client.post(f"{rpc_url}/get_blockchain_state", json={})
         state_data = res.json()
         if state_data.get("success") and not state_data.get("blockchain_state", {}).get("sync", {}).get("synced", False):
             raise HTTPException(status_code=503, detail="Полная нода Chia синхронизируется. Попробуйте позже.")
     except httpx.HTTPError:
         raise HTTPException(status_code=503, detail="Служба блокчейна временно недоступна.")
         
+
+# 🎯 Самый чистый и современный вариант (без лишних импортов)
+class BuildSpendBundleRequest(BaseModel):
+    network: str = Field(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
+    inputs: list[dict] = Field(..., description="Массив объектов {coin_pk_hex, coin_to_spend, wallet_index}")
+    send_to_address: str = Field(..., description="Адрес получателя Chia (xch... / txch...)")
+    mojos_to_send: int = Field(..., description="Сумма отправки в mojo")
+    fee_mojos: int = Field(0, description="Комиссия сети в mojo")
+
 @tx_router.post("/build-spend-bundle")
-async def build_spend_bundle(
-    inputs: list[dict] = Body(..., description="Массив объектов {coin_pk_hex, coin_to_spend, wallet_index}"),
-    send_to_address: str = Body(..., embed=True),
-    mojos_to_send: int = Body(..., embed=True),
-    fee_mojos: int = Body(0, embed=True)
-):
+async def build_spend_bundle(payload: BuildSpendBundleRequest):
+
+    network = payload.network
+    inputs = payload.inputs  # 🌟 Теперь 'inputs' определен!
+    send_to_address = payload.send_to_address
+    mojos_to_send = payload.mojos_to_send
+    fee_mojos = payload.fee_mojos
+
+
     try:
         if not inputs:
             raise HTTPException(status_code=400, detail="Список монет пуст!")
             
-        cert, key = get_ssl_credentials()
-        async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
-            await check_node_synced_internal(c)
+        # Забираем конфиг под целевую сеть
+        cfg = get_network_config(network)
+        cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
         
-        genesis = fetch_genesis(cert, key)
+        async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
+            await check_node_synced_internal(c, rpc_url)
+        
+        # Получаем генезис-хэш конкретной сети (модуль transport сам заберет SSL по имени сети)
+        genesis = fetch_genesis(network)
         total_input_amount = 0
         parsed_coins = []
         
@@ -108,7 +128,8 @@ async def build_spend_bundle(
 
         coin_spends_json_list = []
         messages_to_sign = []
-        
+
+        # --- ЧАСТЬ 2/2 ---
         for idx, item in enumerate(parsed_coins):
             coin = item["coin_obj"]
             puzzle = item["py_puzzle"]

@@ -16,10 +16,7 @@ export default function DashboardClient() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
   const [isSendOpen, setIsSendOpen] = useState(false)
 
-  // 🔌 Подключаем единый WebSocket-канал. 
-  // Хук внутри себя автоматически заберет текущую сеть из Context API.
-  useWalletWs()
-
+ 
   // Возвращаем строго основной контент дашборда авторизованного кошелька XCHIA
   return (
     <>

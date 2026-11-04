@@ -67,7 +67,8 @@ export const useSecureStorage = create<SecureStorageState>()(
 // 2. WALLET SESSION (Реактивная сессия в sessionStorage)
 // ==========================================
 interface WalletSessionState {
-  network: 'mainnet' | 'testnet11' // 🎯 Поле сети для Android и SPA
+  network: 'mainnet' | 'testnet11' 
+  currency: 'RUB' | 'USD' // 🎯 Глобальное состояние валюты пользователя
   unhardenedPkHex: string
   isScreenLocked: boolean
   isVerifying: boolean
@@ -76,7 +77,8 @@ interface WalletSessionState {
   lastActivityAt: number | null
   activeIndexes: string 
   _hasHydrated: boolean
-  setNetwork: (network: 'mainnet' | 'testnet11') => void // 🎯 Сеттер сети
+  setNetwork: (network: 'mainnet' | 'testnet11') => void 
+  setCurrency: (currency: 'RUB' | 'USD') => void // 🎯 Сеттер валюты
   setHasHydrated: (state: boolean) => void
   startSession: (pkHex: string, timeoutMs: number) => void
   updateActivity: (timeoutMs: number) => void
@@ -90,7 +92,8 @@ interface WalletSessionState {
 export const useWalletSession = create<WalletSessionState>()(
   persist(
     (set, get) => ({
-      network: 'testnet11', // 🎯 Дефолтная сеть
+      network: 'testnet11', 
+      currency: 'RUB', // 🎯 Дефолтное значение фиатной отображаемой валюты
       unhardenedPkHex: '',
       isScreenLocked: true, 
       isVerifying: true,    
@@ -100,7 +103,8 @@ export const useWalletSession = create<WalletSessionState>()(
       activeIndexes: '', 
       _hasHydrated: false,
 
-      setNetwork: (network) => set({ network }), // 🎯 Смена сети на лету
+      setNetwork: (network) => set({ network }), 
+      setCurrency: (currency) => set({ currency }), // 🎯 Сеттер глобальной смены валюты
       setHasHydrated: (state) => set({ _hasHydrated: state }),
 
       startSession: (pkHex, timeoutMs) => {
@@ -132,7 +136,8 @@ export const useWalletSession = create<WalletSessionState>()(
       setActiveIndexes: (indexes) => set({ activeIndexes: indexes }), 
       
       endSession: () => set({
-        network: 'testnet11', // Мягкий сброс сети к дефолту при логауте
+        network: 'testnet11', 
+        currency: 'RUB', // Мягкий сброс валюты к дефолту при очистке сессии
         unhardenedPkHex: '',
         isScreenLocked: true,
         isVerifying: false,
@@ -152,3 +157,4 @@ export const useWalletSession = create<WalletSessionState>()(
 
 // ⚡ Стабильные изолированные селекторы для Next.js 16 / Turbopack
 export const useWalletNetwork = () => useWalletSession((state) => state.network)
+export const useWalletCurrency = () => useWalletSession((state) => state.currency) // 🎯 Селектор валюты для компонентов

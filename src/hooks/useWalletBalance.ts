@@ -1,9 +1,20 @@
 'use client'
 
-import { useState, useMemo } from "react"
+import { useMemo } from "react"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
 
-// Вспомогательная функция форматирования строки баланса
+import { useQuery } from "@tanstack/react-query"
+import { useWalletSession } from "@/store/useWalletStore"
+
+const INTERNAL_NEXT_PRICES_API = "/api/nextjs/prices"
+
+interface PricesResponse {
+  success: boolean;
+  source: string;
+  usd: number;
+  rub: number;
+}
+
 export function formatStringBalance(xchString: string | number, decimals: number = 4): string {
   const str = String(xchString);
   if (!str.includes(".")) {
@@ -16,32 +27,44 @@ export function formatStringBalance(xchString: string | number, decimals: number
 
 export function useWalletBalance() {
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletDashboard()
-  const [currency, setCurrency] = useState<"RUB" | "USD">("RUB")
+  
+  // 🎯 Подключаем глобальный Zustand стор вместо локального useState
+  const currency = useWalletSession((state) => state.currency)
+  const setCurrency = useWalletSession((state) => state.setCurrency)
 
-  // Актуальные курсы: 1 XCH ≈ $1.3 USD, $1 USD ≈ 82.00 RUB
-  const PRICE_XCH_USD = 1.3
-  const USD_TO_RUB = 82.00
-  const PRICE_XCH_RUB = PRICE_XCH_USD * USD_TO_RUB
+  const { data: marketData, isError: isPriceError } = useQuery<PricesResponse, Error>({
+    queryKey: ["xchMarketPriceNextRouter"],
+    queryFn: async () => {
+      const res = await fetch(INTERNAL_NEXT_PRICES_API);
+      if (!res.ok) throw new Error("Internal Next.js price route unavailable");
+      return res.json();
+    },
+    staleTime: 15000, 
+    gcTime: 30000
+  });
 
   const isError = Boolean(error)
   const balanceXCH = isError ? "0.0000" : formatStringBalance(realXCHStr, 4)
 
-  // Мемоизированный расчет фиатной строки
   const fiatBalanceString = useMemo(() => {
     if (isError) return "⚠️ Ошибка обновления данных"
     
+    const usdPrice = marketData?.usd || 0
+    const rubPrice = marketData?.rub || 0
+    
     if (currency === "RUB") {
-      const valueInRub = numericXCH * PRICE_XCH_RUB
+      const valueInRub = numericXCH * rubPrice
       return `≈ ${valueInRub.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`
     } else {
-      const valueInUsd = numericXCH * PRICE_XCH_USD
+      const valueInUsd = numericXCH * usdPrice
       return `≈ $${valueInUsd.toFixed(2)} USD`
     }
-  }, [isError, currency, numericXCH, PRICE_XCH_RUB, PRICE_XCH_USD])
+  }, [isError, currency, numericXCH, marketData])
 
+  // 🎯 Переключаем глобально, состояние автоматически обновится во всем приложении
   const toggleCurrency = () => {
     if (!isError) {
-      setCurrency((prev) => (prev === "RUB" ? "USD" : "RUB"))
+      setCurrency(currency === "RUB" ? "USD" : "RUB")
     }
   }
 
@@ -50,7 +73,7 @@ export function useWalletBalance() {
     numericXCH,
     fiatBalanceString,
     currency,
-    isError,
+    isError: isError || isPriceError,
     isFetching,
     refetch,
     toggleCurrency

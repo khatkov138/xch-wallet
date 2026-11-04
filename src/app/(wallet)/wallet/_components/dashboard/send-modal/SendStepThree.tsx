@@ -6,13 +6,14 @@ import { CheckCircle2, ExternalLink, Clock, ShieldCheck } from "lucide-react"
 import { useSendModalContext } from "./SendModalContext"
 import { formatMojoToXchString } from "@/lib/utils"
 import Link from "next/link"
-import { useWalletStatus } from "@/hooks/useWalletStatus"
+
+import { useWalletSession } from "@/store/useWalletStore"
 
 export function SendStepThree() {
   const { preparedSpendData, txId, txResponseData } = useSendModalContext()
 
-const { nodeData } = useWalletStatus()
-  const networkName = nodeData?.network || "mainnet"
+  const network = useWalletSession((state) => state.network);
+
 
   const audit = preparedSpendData?.audit_info
 
@@ -31,7 +32,7 @@ const { nodeData } = useWalletStatus()
     queryKey: ["track-tx", txId, targetCoinId],
     queryFn: async () => {
       if (!txId || !targetCoinId) return null
-      const res = await fetch(`/api/v1/transactions/track-tx?txId=${txId}&targetCoinId=${targetCoinId}`)
+      const res = await fetch(`/api/v1/transactions/track-tx?txId=${txId}&targetCoinId=${targetCoinId}&network=${network}`)
       if (!res.ok) throw new Error("Ошибка трекера")
       return res.json()
     },
@@ -122,7 +123,7 @@ const { nodeData } = useWalletStatus()
       {txId && (
         <Link
           target="_blank"
-          href={`/explorer/${networkName}/coin/${targetCoinId}?txId=${txId}`}
+          href={`/explorer/${network}/coin/${targetCoinId}?txId=${txId}`}
           className="flex items-center gap-2 bg-zinc-950 hover:bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-400 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition-all active:scale-[0.98] cursor-pointer"
         >
           <span>Детали монеты в Explorer</span>

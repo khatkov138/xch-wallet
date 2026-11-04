@@ -1,9 +1,19 @@
 import { useMutation } from "@tanstack/react-query"
 import { selectChiaCoins } from "../ChiaCoinSelection"
+import { useWalletSession } from "@/store/useWalletStore"
+
+
+
 
 export function useBuildBundleMutation(ctx: any, unspentCoins: any[], walletAddresses: any[]) {
+
+  const network = useWalletSession((state) => state.network);
+
+
   return useMutation({
     mutationFn: async () => {
+
+
       const { targetAddress, amount, customFeeMojo } = ctx
       if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
 
@@ -29,12 +39,18 @@ export function useBuildBundleMutation(ctx: any, unspentCoins: any[], walletAddr
       const res = await fetch("/api/v1/transactions/build-spend-bundle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs, send_to_address: targetAddress.trim(), mojos_to_send: totalMojosToSend, fee_mojos: totalFeeMojos })
+        body: JSON.stringify({
+          network,
+          inputs,
+          send_to_address: targetAddress.trim(),
+          mojos_to_send: totalMojosToSend,
+          fee_mojos: totalFeeMojos
+        })
       })
 
       const result = await res.json()
       if (!res.ok || !result.success) throw new Error(result.detail || "Ошибка подготовки")
-      
+
       // Возвращаем данные для сохранения и локальный снапшот для Шага 2
       return { data: result, snapshot: { targetAddress: targetAddress.trim(), mojosToSend: totalMojosToSend } }
     },

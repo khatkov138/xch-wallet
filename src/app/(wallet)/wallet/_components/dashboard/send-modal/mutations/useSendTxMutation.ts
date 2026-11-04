@@ -7,6 +7,9 @@ export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRe
   const queryClient = useQueryClient()
   const { getMnemonicForSigning } = useWalletAuth()
 
+   const network = useWalletSession((state) => state.network);
+
+
   return useMutation({
     mutationFn: async () => {
       const { preparedSpendData, pin, localSnapshot } = ctx
@@ -46,6 +49,7 @@ export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRe
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          network,
           signatures_list: signatures,
           coin_spends: coinSpendsList.map((cs: any) => ({ wallet_index: cs.wallet_index, synthetic_offset_hex: cs.synthetic_offset_hex, coin: cs.coin, puzzle_reveal: cs.puzzle_reveal, solution: cs.solution })),
           integrity_token: preparedSpendData.integrity_token,

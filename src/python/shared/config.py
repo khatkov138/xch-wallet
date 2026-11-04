@@ -5,32 +5,42 @@ from pathlib import Path
 # Отключаем предупреждения о самоподписанных SSL-сертификатах Chia
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-BASE_RPC_URL = "https://localhost:8555"
 API_SECRET = os.getenv("API_SECRET", "DEFAULT_FALLBACK_KEY_DO_NOT_USE_IN_PROD").encode("utf-8")
 
-def get_ssl_credentials() -> tuple[str, str]:
+# Карта конфигураций для сетей
+NETWORKS = {
+    "mainnet": {
+        "rpc_url": "https://localhost:8557",
+        "dir_name": "real_mainnet"
+    },
+    "testnet11": {
+        "rpc_url": "https://localhost:8555",
+        "dir_name": "mainnet"  # Дефолтная папка чиа для тестнеты на вашей машине
+    }
+}
+
+def get_network_config(network: str) -> dict:
+    """
+    Возвращает rpc_url, пути к crt и key для указанной сети (mainnet или testnet11).
+    """
+    net = str(network).lower()
+    if net not in NETWORKS:
+        raise ValueError(f"Неподдерживаемая сеть: {network}")
+        
+    cfg = NETWORKS[net]
     home = Path.home()
-    root_path = home / ".chia/mainnet"
-    config_file = root_path / "config/config.yaml"
+    root_path = home / f".chia/{cfg['dir_name']}"
     
-    if config_file.exists():
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                if 'selected_network: "testnet11"' in f.read():
-                    testnet_path = home / ".chia/testnet11"
-                    if testnet_path.exists():
-                        root_path = testnet_path
-        except Exception as e:
-            print(f"⚠️ [SSL AUTO] Не удалось прочитать config.yaml: {e}")
-            
     c = root_path / "config/ssl/full_node/private_full_node.crt"
     k = root_path / "config/ssl/full_node/private_full_node.key"
     
-    if c.exists() and k.exists(): 
-        return str(c), str(k)
+    # Если сертификаты по путям не найдены, генерируем фолбэк пути динамически без хардкода юзера
+    if not (c.exists() and k.exists()):
+        c = home / f".chia/{cfg['dir_name']}/config/ssl/full_node/private_full_node.crt"
+        k = home / f".chia/{cfg['dir_name']}/config/ssl/full_node/private_full_node.key"
         
-    current_net = "testnet11" if "testnet11" in str(root_path) else "mainnet"
-    return (
-        f"C:\\Users\\khatk\\.chia\\{current_net}\\config\\ssl\\full_node\\private_full_node.crt", 
-        f"C:\\Users\\khatk\\.chia\\{current_net}\\config\\ssl\\full_node\\private_full_node.key"
-    )
+    return {
+        "rpc_url": cfg["rpc_url"],
+        "crt": str(c),
+        "key": str(k)
+    }

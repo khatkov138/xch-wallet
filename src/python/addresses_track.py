@@ -1,6 +1,6 @@
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
-from shared import get_ssl_credentials, BASE_RPC_URL
+from shared.config import get_network_config
 from chia.util.bech32m import decode_puzzle_hash
 from chia_rs import Coin  # Нативный билдер для расчета coin_id
 
@@ -18,7 +18,10 @@ def clean_to_puzzle_hash(input_str: str) -> str:
 @addresses_router.get("/track-address")
 async def track_address(
     puzzle_hash: str = Query(..., alias="puzzleHash"),
-    include_spent: bool = Query(True, alias="includeSpent")
+    include_spent: bool = Query(True, alias="includeSpent"),
+    network: str = Query(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
+
+
 ):
     """
     Высокоточный атомарный трекер адресов Chia с автоматической конвертацией
@@ -29,11 +32,13 @@ async def track_address(
         if not clean_ph:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="puzzleHash cannot be empty!")
         
-        cert, key = get_ssl_credentials()
+        # Динамически извлекаем конфигурацию портов и SSL на базе выбранной сети
+        cfg = get_network_config(network)
+        cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
 
         async with httpx.AsyncClient(verify=False, cert=(cert, key), timeout=5.0) as client:
             rpc_res = await client.post(
-                f"{BASE_RPC_URL}/get_coin_records_by_puzzle_hash",
+                f"{rpc_url}/get_coin_records_by_puzzle_hash",
                 json={"puzzle_hash": clean_ph, "include_spent_coins": include_spent}
             )
             
