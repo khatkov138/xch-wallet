@@ -95,7 +95,7 @@ export function AddressCard() {
             <Loader2 size={12} className="animate-spin text-[#FF2E93]" />
             <span>Синхронизация адресов...</span>
           </div>
-        )}
+        )} 
       </div>
     </div>
   )

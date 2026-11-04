@@ -10,23 +10,27 @@ export function useWalletDashboard() {
   const setActiveIndexes = useWalletSession((state: any) => state.setActiveIndexes)
   const isVerifying = useWalletSession((state: any) => state.isVerifying)
   const isScreenLocked = useWalletSession((state: any) => state.isScreenLocked)
+  
+  // 🎯 Достаем активную сеть из Zustand стора
+  const network = useWalletSession((state: any) => state.network)
 
   const isReadyToFetch = !isVerifying && !isScreenLocked && !!unhardenedPkHex
   const currentMode = !activeIndexes ? "heavy" : "light"
 
   const query = useQuery({
-    // 🎯 ФИКС 1: Добавили activeIndexes в queryKey. 
-    // Теперь при переходе heavy -> light запрос мгновенно реагирует на смену аргументов.
-    queryKey: ["wallet-dashboard", unhardenedPkHex, activeIndexes],
+    // 🎯 ФИКС 1: Добавили network в queryKey. Теперь при смене сети кэш изолирован,
+    // и TanStack Query мгновенно делает новый чистый запрос для тестнета/мейннета.
+    queryKey: ["wallet-dashboard", network, unhardenedPkHex, activeIndexes],
     queryFn: async () => {
       const params = new URLSearchParams({
         publicKeyHex: unhardenedPkHex,
+        network: network, // 🎯 ФИКС 2: Передаем сеть в GET-параметры бэкенду
         mode: currentMode,
         limit: "200",
         ...(activeIndexes && { active_indexes: activeIndexes })
       })
       
-      console.log(`📡 [API TRIGGER] Запрос отправлен! Сеть качает в режиме: ${currentMode.toUpperCase()}`)
+      console.log(`📡 [API TRIGGER] Запрос [${network.toUpperCase()}]! Режим: ${currentMode.toUpperCase()}`)
 
       const res = await fetch(`/api/wallet/dashboard?${params.toString()}`)
       if (!res.ok) throw new Error("Sync failed")
@@ -37,13 +41,10 @@ export function useWalletDashboard() {
     staleTime: 5 * 60 * 1000,
     refetchInterval: 15 * 1000,
     refetchIntervalInBackground: false,
-    
-    // 🎯 ФИКС 2: SELECT-MEMOIZATION. Через встроенный Structural Sharing в TanStack Query v5 
-    // ссылки на массивы внутри data останутся прежними, если бэк вернул те же данные. Ререндеров в Layout нет.
     select: (data) => data
   })
 
-  // 🎯 СИНХРОНИЗАЦИЯ АКТИВНЫХ ИНДЕКСОВ БЕЗ ЦИКЛИЧЕСКОЙ ЗАВИСИМОСТИ
+  // СИНХРОНИЗАЦИЯ АКТИВНЫХ ИНДЕКСОВ БЕЗ ЦИКЛИЧЕСКОЙ ЗАВИСИМОСТИ
   useEffect(() => {
     if (query.data?.meta?.active_indexes) {
       const freshIndexesStr = query.data.meta.active_indexes.join(",")
@@ -62,9 +63,9 @@ export function useWalletDashboard() {
   return {
     realXCHStr,
     numericXCH,
-    addresses,       // Стабильная ссылка благодаря select-паттерну
-    transactions,    // Стабильная ссылка
-    unspentCoins,    // Стабильная ссылка
+    addresses,       
+    transactions,    
+    unspentCoins,    
     balance: query.data?.balance ?? null, 
     error: query.error,
     isFetching: query.isFetching,
