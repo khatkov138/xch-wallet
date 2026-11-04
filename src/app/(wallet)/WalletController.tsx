@@ -1,23 +1,19 @@
 'use client'
 
 import React, { useEffect, useState } from "react"
-
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
 import { useIdleTimer } from "@/hooks/useIdleTimer"
 import { useWalletContext } from "./WalletContext"
-import DashboardClient from "./[network]/wallet/DashboardClient"
-import AuthClient from "./[network]/wallet/AuthClient"
-import { UnlockPinForm } from "./[network]/wallet/UnlockPinForm"
+import DashboardClient from "./wallet/DashboardClient"
+import AuthClient from "./wallet/AuthClient"
+import { UnlockPinForm } from "./wallet/UnlockPinForm"
 
 export function WalletController() {
   const { network, isExiting } = useWalletContext()
-  
   const [authChecked, setAuthChecked] = useState(false)
-
   const { checkInitialState } = useWalletAuth()
 
-  // 🛡️ Перевели управление режимом авторизации на Zustand стор сессии
   const noWalletMode = useWalletSession((state) => state.noWalletMode)
   const setNoWalletMode = useWalletSession((state) => state.setNoWalletMode)
 
@@ -52,10 +48,14 @@ export function WalletController() {
       setNoWalletMode(false)
       setAuthChecked(true)
     }
-  }, [isHydrated, isExiting, network, checkInitialState])
+  }, [isHydrated, isExiting, network, checkInitialState, setScreenLocked, setVerifying, setNoWalletMode])
 
   if (!isHydrated || !authChecked) {
-    return null
+    return (
+      <div className="flex h-full w-full items-center justify-center">
+        <div className="h-4 w-4 animate-spin rounded-full border border-zinc-600 border-t-[#FF2E93]" />
+      </div>
+    )
   }
 
   if (isExiting) {

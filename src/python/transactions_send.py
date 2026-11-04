@@ -117,7 +117,7 @@ async def send_tx(
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as client:
             res = await client.post(f"{BASE_RPC_URL}/push_tx", json={"spend_bundle": spend_bundle.to_json_dict()})
             node_response = res.json()
-            
+             
         is_success = node_response.get("success", False)
         
         return {

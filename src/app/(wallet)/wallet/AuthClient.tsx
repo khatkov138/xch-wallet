@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { ImportPhraseForm } from "./_components/auth/import-wallet/ImportPhraseForm"
 import { GeneratePhraseForm } from "./_components/auth/GeneratePhraseForm"
 import { CreateWalletForm } from "./_components/auth/CreateWalletForm"
-import { useWalletContext } from "../../WalletContext"
+import { useWalletContext } from "../WalletContext"
 
 function AuthTabsContainer({ 
   currentTab, 

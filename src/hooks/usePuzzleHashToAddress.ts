@@ -1,25 +1,23 @@
 'use client'
 
-import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { useMemo } from "react"
+import { useWalletSession } from "@/store/useWalletStore"
 import { puzzleHashToAddress } from "@/lib/utils/crypto"
 
 /**
  * 🎯 УНИВЕРСАЛЬНЫЙ ХУК ДЛЯ АВТОМАТИЧЕСКОЙ КОНВЕРТАЦИИ PUZZLE HASH В РЕАЛЬНЫЙ АДРЕС
- * Сам следит за текущей сетью (Mainnet/Testnet) и кэширует результат.
- * 
- * @param puzzleHash Сырой хэш пазла (строка hex с 0x или без)
- * @returns Строка адреса формата xch1... или txch1...
+ * Берет значение сети из Zustand-стора для мгновенного и стабильного переключения префиксов.
  */
 export function usePuzzleHashToAddress(puzzleHash: string | undefined | null): string {
-  // 1. Один раз подписываемся на статус сети во всем приложении
-  const { nodeData } = useWalletStatus()
+  // Стабильный синхронный селектор сети из Zustand
+  const network = useWalletSession((state) => state.network)
 
-  if (!puzzleHash) return ""
-
-  // 2. Вычисляем текущий префикс
-  const networkName = nodeData?.network || "mainnet"
-  const currentPrefix = networkName.toLowerCase().includes("testnet") ? "txch" : "xch"
-
-  // 3. Возвращаем готовый закодированный адрес
-  return puzzleHashToAddress(puzzleHash, currentPrefix)
+  return useMemo(() => {
+    if (!puzzleHash) return ""
+    
+    // Префикс вычисляется моментально на основе выбранной в UI сети
+    const prefix = network === 'mainnet' ? "xch" : "txch"
+    
+    return puzzleHashToAddress(puzzleHash, prefix)
+  }, [puzzleHash, network])
 }

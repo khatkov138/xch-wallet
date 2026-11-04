@@ -3,6 +3,7 @@
 import React from "react"
 import { RefreshCw } from "lucide-react"
 import { useWalletBalance } from "@/hooks/useWalletBalance"
+import { useWalletSession } from "@/store/useWalletStore"
 
 export function BalanceSection() {
   const { 
@@ -13,6 +14,10 @@ export function BalanceSection() {
     refetch, 
     toggleCurrency 
   } = useWalletBalance()
+
+  // Достаем состояние сети из твоего глобального стора
+  const network = useWalletSession((state) => state.network)
+  const isMainnet = network === 'mainnet'
 
   return (
     <section className="text-center py-4 space-y-1 relative">
@@ -31,7 +36,9 @@ export function BalanceSection() {
       </p>
 
       <h2 className="text-4xl font-black tracking-tight text-white select-all">
-        {balanceXCH} <span className="text-zinc-500 font-medium text-2xl">XCH</span>
+        {balanceXCH} <span className="text-zinc-500 font-medium text-2xl transition-colors duration-150">
+          {isMainnet ? 'XCH' : 'TXCH'}
+        </span>
       </h2>
 
       <p 

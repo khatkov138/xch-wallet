@@ -2,17 +2,19 @@
 
 import React, { createContext, useContext, useState, startTransition } from 'react'
 import { useWalletAuth } from "@/hooks/useWalletAuth"
+import { useWalletNetwork } from "@/store/useWalletStore"
 import { useRouter } from "next/navigation"
 
 interface WalletContextProps {
-  network: string
+  network: 'mainnet' | 'testnet11'
   isExiting: boolean
   triggerGlobalLogout: (onClear: () => void) => void
 }
 
 const WalletContextInstance = createContext<WalletContextProps | undefined>(undefined)
 
-export function WalletContextProvider({ network, children }: { network: string; children: React.ReactNode }) {
+export function WalletContextProvider({ children }: { children: React.ReactNode }) {
+  const network = useWalletNetwork()
   const { hardResetWallet } = useWalletAuth()
   const [isExiting, setIsExiting] = useState(false)
   const router = useRouter()

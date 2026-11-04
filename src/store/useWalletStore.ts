@@ -67,20 +67,22 @@ export const useSecureStorage = create<SecureStorageState>()(
 // 2. WALLET SESSION (Реактивная сессия в sessionStorage)
 // ==========================================
 interface WalletSessionState {
+  network: 'mainnet' | 'testnet11' // 🎯 Поле сети для Android и SPA
   unhardenedPkHex: string
   isScreenLocked: boolean
   isVerifying: boolean
-  noWalletMode: boolean // 🎯 Добавлено в интерфейс
+  noWalletMode: boolean 
   expiresAt: number | null
   lastActivityAt: number | null
   activeIndexes: string 
   _hasHydrated: boolean
+  setNetwork: (network: 'mainnet' | 'testnet11') => void // 🎯 Сеттер сети
   setHasHydrated: (state: boolean) => void
   startSession: (pkHex: string, timeoutMs: number) => void
   updateActivity: (timeoutMs: number) => void
   setScreenLocked: (status: boolean) => void
   setVerifying: (status: boolean) => void
-  setNoWalletMode: (status: boolean) => void // 🎯 Добавлено в интерфейс
+  setNoWalletMode: (status: boolean) => void 
   setActiveIndexes: (indexes: string) => void 
   endSession: () => void
 }
@@ -88,15 +90,17 @@ interface WalletSessionState {
 export const useWalletSession = create<WalletSessionState>()(
   persist(
     (set, get) => ({
+      network: 'testnet11', // 🎯 Дефолтная сеть
       unhardenedPkHex: '',
       isScreenLocked: true, 
       isVerifying: true,    
-      noWalletMode: false, // 🎯 Инициализация флага стейт-машины
+      noWalletMode: false, 
       expiresAt: null,
       lastActivityAt: null,
       activeIndexes: '', 
       _hasHydrated: false,
 
+      setNetwork: (network) => set({ network }), // 🎯 Смена сети на лету
       setHasHydrated: (state) => set({ _hasHydrated: state }),
 
       startSession: (pkHex, timeoutMs) => {
@@ -105,7 +109,7 @@ export const useWalletSession = create<WalletSessionState>()(
           unhardenedPkHex: pkHex,
           isScreenLocked: false,
           isVerifying: false,
-          noWalletMode: false, // Сбрасываем при успешном старте сессии
+          noWalletMode: false, 
           lastActivityAt: now,
           expiresAt: now + timeoutMs,
           activeIndexes: '' 
@@ -123,15 +127,16 @@ export const useWalletSession = create<WalletSessionState>()(
 
       setScreenLocked: (status) => set({ isScreenLocked: status }),
       setVerifying: (status) => set({ isVerifying: status }),
-      setNoWalletMode: (status) => set({ noWalletMode: status }), // 🎯 Сеттер режима
+      setNoWalletMode: (status) => set({ noWalletMode: status }), 
       
       setActiveIndexes: (indexes) => set({ activeIndexes: indexes }), 
       
       endSession: () => set({
+        network: 'testnet11', // Мягкий сброс сети к дефолту при логауте
         unhardenedPkHex: '',
         isScreenLocked: true,
         isVerifying: false,
-        noWalletMode: false, // 🎯 Мягкий сброс стейт-машины при логауте
+        noWalletMode: false, 
         expiresAt: null,
         lastActivityAt: null,
         activeIndexes: '' 
@@ -144,3 +149,6 @@ export const useWalletSession = create<WalletSessionState>()(
     }
   )
 )
+
+// ⚡ Стабильные изолированные селекторы для Next.js 16 / Turbopack
+export const useWalletNetwork = () => useWalletSession((state) => state.network)

@@ -1,4 +1,4 @@
-import { WalletController } from "../../WalletController"
+import { WalletController } from "../WalletController"
 
 export const instant = false
 

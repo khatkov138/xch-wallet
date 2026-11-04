@@ -11,7 +11,7 @@ CHIA_WS_URL, ALLOWED_NETWORKS = "wss://localhost:55400", {"mainnet", "testnet11"
 VPS_HOST = os.getenv("VPS_HOST", "localhost")
 SECRET_BRIDGE_TOKEN = os.getenv("WS", "LOCAL_DEV_SECRET_TOKEN_998877")
 
-# 🎯 ИЗМЕНЕНО: Порт изменен с 8080 на единый порт бэкенда 8000
+# Порт бэкенда 8000
 VPS_WS_URL = f"ws://{VPS_HOST}:8000/ws/home-node?token={SECRET_BRIDGE_TOKEN}"
 START_MOD_TIME = os.path.getmtime(CURRENT_FILE)
 
@@ -96,11 +96,23 @@ async def bridge_loop():
             net_name = net_data.get("network_name")
             if net_name not in ALLOWED_NETWORKS: raise ValueError(f"Сеть '{net_name}' запрещена")
             print(f"[🌐 СЕТЬ] Валидация пройдена: {net_name}")
+            
             async with websockets.connect(CHIA_WS_URL, ssl=ctx, max_size=None) as c_ws, websockets.connect(VPS_WS_URL, max_size=None) as v_ws:
-                await asyncio.gather(handle_stream(c_ws, v_ws, net_name, crt, key), listen_vps(v_ws, net_name, crt, key), sync_heartbeat(v_ws, net_name, crt, key))
+                # 🚀 ИЗМЕНЕНО: Мгновенный пуш актуального состояния сразу при коннекте
+                # Это гарантирует, что сервер авторизует мост в правильный слот (mainnet/testnet11) без задержек
+                init_state = await rpc_req("get_blockchain_state", key, crt, 10.0)
+                if init_state:
+                    await send_state(v_ws, net_name, init_state.get("blockchain_state") or init_state, crt, key, "🚀 INIT_PUSH")
+                
+                await asyncio.gather(
+                    handle_stream(c_ws, v_ws, net_name, crt, key), 
+                    listen_vps(v_ws, net_name, crt, key), 
+                    sync_heartbeat(v_ws, net_name, crt, key)
+                )
         except (websockets.exceptions.ConnectionClosed, OSError, httpx.HTTPError, RuntimeError) as e:
             print(f"[⚠️ СБОЙ СВЯЗИ/RPC_DOWN] {e}. Повтор через 5 секунд...")
-        except Exception as e: print(f"[💥 КРИТ_ОШИБКА] {e}")
+        except Exception as e: 
+            print(f"[💥 КРИТ_ОШИБКА] {e}")
         await asyncio.sleep(5)
 
 async def main():

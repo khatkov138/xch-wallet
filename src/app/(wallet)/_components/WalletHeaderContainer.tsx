@@ -69,24 +69,11 @@ export function WalletHeaderContainer() {
 
   return (
     <div className="w-full space-y-4">
-      {isClientReady && (
-        <WalletBanner 
-          isPythonDown={isPythonDown}
-          isRpcDown={isRpcDown}
-          isNotSynced={isNotSynced}
-          isBannerHidden={isBannerHidden}
-          progressPercent={nodeData?.progressPercent || "0.0000"}
-          currentHeight={nodeData?.currentHeight || 0}
-          targetHeight={nodeData?.targetHeight || 0}
-        />
-      )}
+     
 
       <WalletHeader 
-        isClientReady={isClientReady}
-        currentNetwork={nodeData?.network || null}
-        statusText={headerStatus.text}
-        statusBadgeClass={headerStatus.badgeClass}
-        statusDotClass={headerStatus.dotClass}
+       
+     
         showLogout={showLogout}
         onLogout={handleLogout}
       />
