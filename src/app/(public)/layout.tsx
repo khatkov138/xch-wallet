@@ -1,11 +1,13 @@
-'use client'
-
 import { Background } from "@/components/Background"
 import React from "react"
 
 interface ExplorerLayoutProps {
   children: React.ReactNode
 }
+
+// 🎯 Указываем Next.js, какие сети компилировать в статический HTML на этапе сборки.
+// Это фиксит ошибку prerender-metadata для всех вложенных страниц (explorer/status и др.)
+
 
 export default function PublicLayout({ children }: ExplorerLayoutProps) {
   return (

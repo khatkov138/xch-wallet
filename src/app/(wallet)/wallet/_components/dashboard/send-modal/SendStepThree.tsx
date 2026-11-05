@@ -6,13 +6,12 @@ import { CheckCircle2, ExternalLink, Clock, ShieldCheck } from "lucide-react"
 import { useSendModalContext } from "./SendModalContext"
 import { formatMojoToXchString } from "@/lib/utils"
 import Link from "next/link"
-
-import { useWalletSession } from "@/store/useWalletStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function SendStepThree() {
   const { preparedSpendData, txId, txResponseData } = useSendModalContext()
 
-  const network = useWalletSession((state) => state.network);
+  const network = useUserSettingsStore((state) => state.network);
 
 
   const audit = preparedSpendData?.audit_info

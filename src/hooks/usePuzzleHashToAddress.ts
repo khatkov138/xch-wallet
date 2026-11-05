@@ -1,8 +1,9 @@
 'use client'
 
 import { useMemo } from "react"
-import { useWalletSession } from "@/store/useWalletStore"
+
 import { puzzleHashToAddress } from "@/lib/utils/crypto"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 /**
  * 🎯 УНИВЕРСАЛЬНЫЙ ХУК ДЛЯ АВТОМАТИЧЕСКОЙ КОНВЕРТАЦИИ PUZZLE HASH В РЕАЛЬНЫЙ АДРЕС
@@ -10,7 +11,7 @@ import { puzzleHashToAddress } from "@/lib/utils/crypto"
  */
 export function usePuzzleHashToAddress(puzzleHash: string | undefined | null): string {
   // Стабильный синхронный селектор сети из Zustand
-  const network = useWalletSession((state) => state.network)
+  const network = useUserSettingsStore((state) => state.network)
 
   return useMemo(() => {
     if (!puzzleHash) return ""

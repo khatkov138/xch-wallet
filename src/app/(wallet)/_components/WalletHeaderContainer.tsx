@@ -1,28 +1,35 @@
 'use client'
 
 import React from "react"
+import { useRouter } from "next/navigation" // 🚀 Нативный роутер Next.js
 import { WalletHeader } from "./WalletHeader"
-import { useWalletContext } from "../WalletContext"
-import { useWalletSession, useSecureStorage } from "@/store/useWalletStore"
+import { useWalletAuth } from "@/hooks/useWalletAuth"
+
+import { useSecureStore } from "@/store/useSecureStore"
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore" 
 
 export function WalletHeaderContainer() {
-  const { triggerGlobalLogout } = useWalletContext()
+  const router = useRouter()
+  const { hardResetWallet } = useWalletAuth() // Функция очистки ключей и сброса куки isAuth в false
 
-  const activePkHex = useWalletSession((state) => state.unhardenedPkHex)
-  const isScreenLocked = useWalletSession((state) => state.isScreenLocked)
+  const activePkHex = useWalletSessionStore((state) => state.unhardenedPkHex)
+  const isScreenLocked = useWalletSessionStore((state) => state.isScreenLocked)
   
-  const isSessionHydrated = useWalletSession((state) => state._hasHydrated)
-  const isSecureHydrated = useSecureStorage((state) => state._hasHydrated)
+  // Проверяем гидратацию сессионных хранилищ вкладки для показа кнопки
+  const isSessionHydrated = useWalletSessionStore((state) => state._hasHydrated)
+  const isSecureHydrated = useSecureStore((state) => state._hasHydrated)
   const isStoreHydrated = isSessionHydrated && isSecureHydrated
 
-  // Кнопка логаута покажется только после полной гидратации сторов на клиенте
   const showLogout = isStoreHydrated && !!activePkHex && !isScreenLocked
 
   const handleLogout = () => {
-    triggerGlobalLogout(() => {
-      useWalletSession.getState().setScreenLocked(false)
-    })
+    // 1. Полностью стираем сессию, диск и куку (с мгновенным noWalletMode под капотом)
+    hardResetWallet() 
+    
+    // 2. Спокойно обновляем серверные компоненты, чтобы зафиксировать чистый URL
+    router.refresh()
   }
+
 
   return (
     <div className="w-full">

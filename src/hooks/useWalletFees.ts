@@ -1,6 +1,8 @@
 'use client';
 
-import { useWalletSession } from '@/store/useWalletStore';
+
+
+import { useUserSettingsStore } from '@/providers/UserSettnigsProvider';
 import { useQuery } from '@tanstack/react-query';
 
 export interface FeeOption {
@@ -20,7 +22,7 @@ interface BackendFeesResponse {
 }
 
 export function useWalletFees(isEnabled: boolean = false, coinSpendsCount: number = 1) {
-  const network = useWalletSession((state) => state.network);
+  const network = useUserSettingsStore((state) => state.network);
   const FEES_QUERY_KEY = ['chiaNodeFeesEstimate', network, coinSpendsCount];
 
   return useQuery<BackendFeesResponse, Error, CalculatedFees>({

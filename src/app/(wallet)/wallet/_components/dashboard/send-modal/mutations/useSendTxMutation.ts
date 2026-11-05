@@ -1,14 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { useWalletSession } from "@/store/useWalletStore"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
+
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRefObject<Set<string>>) {
   const queryClient = useQueryClient()
   const { getMnemonicForSigning } = useWalletAuth()
 
-   const network = useWalletSession((state) => state.network);
-
+  const network = useUserSettingsStore((state) => state.network);
 
   return useMutation({
     mutationFn: async () => {
@@ -68,13 +69,12 @@ export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRe
       ctx.setStatusMessage("🎉 Успешно! Монеты отправлены!")
       ctx.setPin("")
       
-      // 🎯 ПРОБРОС: Передаем сырой JSON-ответ в контекст для трекера Шага 3
       if (typeof ctx.setTxResponseData === "function") {
         ctx.setTxResponseData(resData)
       }
 
-      // Пессимистичный сброс UTXO в основном дашборде
-      const activePk = useWalletSession.getState().unhardenedPkHex
+      // ИСПРАВЛЕНИЕ: Читаем активный ключ из переименованного стора сессии
+      const activePk = useWalletSessionStore.getState().unhardenedPkHex
       queryClient.setQueryData(["wallet-dashboard", activePk], (oldData: any) => {
         if (!oldData || !resData.tracked_info) return oldData
         const spentSet = new Set(resData.tracked_info.spent_coins.map((id: string) => id.toLowerCase()))

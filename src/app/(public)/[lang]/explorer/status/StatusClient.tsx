@@ -1,3 +1,4 @@
+// app/(public)/[network]/status/StatusClient.tsx
 'use client'
 
 import React, { useState, useEffect, useRef } from "react"
@@ -8,7 +9,7 @@ import { SyncCard } from "./_components/SyncCard"
 import { TrafficList } from "./_components/TrafficList"
 import { MetricsGrid } from "./_components/MetricsGrid"
 
-export default function StatusPage() {
+export default function StatusClient() {
   const [blocksPerMinute, setBlocksPerMinute] = useState(0)
   const [estimatedTimeLeft, setEstimatedTimeLeft] = useState("Расчет...")
   const [isClientReady, setIsClientReady] = useState(false)

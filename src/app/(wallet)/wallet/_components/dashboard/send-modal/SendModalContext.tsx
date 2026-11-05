@@ -10,7 +10,40 @@ import { formatMojoToXchString } from "@/lib/utils"
 
 type FeeTier = "low" | "medium" | "high"
 
-const SendModalContext = createContext<any>(undefined)
+// 🎯 Строгий интерфейс для контекста, чтобы убрать все ошибки TypeScript
+interface SendModalContextType {
+  targetAddress: string
+  setTargetAddress: React.Dispatch<React.SetStateAction<string>>
+  amount: string
+  setAmount: React.Dispatch<React.SetStateAction<string>>
+  customFeeMojo: string
+  setCustomFeeMojo: React.Dispatch<React.SetStateAction<string>>
+  pin: string
+  setPin: React.Dispatch<React.SetStateAction<string>>
+  step: 1 | 2 | 3
+  setStep: React.Dispatch<React.SetStateAction<1 | 2 | 3>>
+  statusMessage: string
+  setStatusMessage: React.Dispatch<React.SetStateAction<string>>
+  preparedSpendData: any
+  setPreparedSpendData: React.Dispatch<React.SetStateAction<any>>
+  localSnapshot: any
+  setLocalSnapshot: React.Dispatch<React.SetStateAction<any>>
+  setTxResponseData: React.Dispatch<React.SetStateAction<any>>
+  setSelectedTier: React.Dispatch<React.SetStateAction<FeeTier>>
+  selectedTier: FeeTier
+  handleSubmit: (e: React.FormEvent) => void
+  realXCHStr: string
+  dynamicFees: any
+  getFeeInXchString: () => string
+  getTotalOutflowString: () => string
+  handleSetMax: () => void
+  txResponseData: any
+  loading: boolean
+  txStatus: "IDLE" | "PENDING" | "SUCCESS" | "ERROR"
+  txId: string | null
+}
+
+const SendModalContext = createContext<SendModalContextType | undefined>(undefined)
 
 export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) {
   const [targetAddress, setTargetAddress] = useState("")
@@ -19,13 +52,10 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
   const [customFeeMojo, setCustomFeeMojo] = useState("0")
   const [pin, setPin] = useState("")
   
-  // 🎯 Изменяем тип шага, допуская Шаг 3 (Экран успеха и поллинга сети)
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [statusMessage, setStatusMessage] = useState("")
   const [preparedSpendData, setPreparedSpendData] = useState<any>(null)
   const [localSnapshot, setLocalSnapshot] = useState<any>(null)
-  
-  // 🎯 Новое состояние для хранения сырого JSON-ответа отправленной транзакции
   const [txResponseData, setTxResponseData] = useState<any>(null)
 
   const sentTransactionsRef = useRef<Set<string>>(new Set())
@@ -38,7 +68,6 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
 
   const { data: dynamicFees } = useWalletFees(isOpen, estimatedSpendsCount)
 
-  // self-ссылка включает все мутаторы стейтов для изолированных файлов мутаций
   const self = {
     targetAddress, 
     setTargetAddress, 
@@ -56,7 +85,7 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
     setPreparedSpendData, 
     localSnapshot, 
     setLocalSnapshot,
-    setTxResponseData // 🎯 Передаем мутатор ответа, чтобы useSendTxMutation мог его вызвать
+    setTxResponseData 
   }
 
   const buildBundleMutation = useBuildBundleMutation(self, unspentCoins, addresses)
@@ -77,11 +106,15 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
 
   useEffect(() => { if (!isOpen) resetAll() }, [isOpen])
 
-  useEffect(() => {
-    if (dynamicFees && dynamicFees[selectedTier]) {
-      setCustomFeeMojo(String(dynamicFees[selectedTier].mojo))
+   useEffect(() => {
+    // Явно приводим к Record<FeeTier, any>, чтобы TS разрешил динамический индекс
+    const fees = dynamicFees as Record<FeeTier, any> | undefined;
+    
+    if (fees && fees[selectedTier]) {
+      setCustomFeeMojo(String(fees[selectedTier].mojo))
     }
   }, [selectedTier, dynamicFees])
+
 
   const getFeeInXchString = () => {
     try {
@@ -111,12 +144,12 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
       setSelectedTier, 
       selectedTier, 
       handleSubmit, 
-      realXCHStr,
+      realXCHStr: realXCHStr || "0.0000", // Защита от undefined
       dynamicFees,
       getFeeInXchString,      
       getTotalOutflowString,   
       handleSetMax,           
-      txResponseData, // 🎯 Прокидываем наружу для чтения в SendStepThree
+      txResponseData, 
       loading: buildBundleMutation.isPending || sendTxMutation.isPending,
       txStatus: txStatusMap[sendTxMutation.status],
       txId: sendTxMutation.data?.tx_id ?? null

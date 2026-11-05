@@ -23,7 +23,7 @@ export default function WalletGlobalLoading() {
         {/* Минималистичный лоадер, приглушенный в zinc-палитру */}
         <div className="flex items-center gap-2 text-zinc-500 font-mono text-[10px] tracking-widest uppercase">
           <Loader2 size={12} className="animate-spin text-zinc-500" />
-          <span>Загрузка сессии</span>
+          <span>wallet loading.tsx</span>
         </div>
         
       </div>

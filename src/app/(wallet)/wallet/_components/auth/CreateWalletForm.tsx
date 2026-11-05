@@ -1,16 +1,17 @@
 'use client'
 
 import React, { useState } from "react"
-import { PinCodeLayout } from "@/components/PinCodeLayout"
+import { useRouter } from "next/navigation" // 🚀 Импортируем нативный роутер
+
 import { useWalletAuth } from "@/hooks/useWalletAuth" 
-import { useWalletContext } from "@/app/(wallet)/WalletContext"
+import { PinCodeLayout } from "@/app/(wallet)/_components/PinCodeLayout"
 
 interface EncryptPhraseFormProps {
   phraseToEncrypt: string
 }
 
 export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
-  const { onWalletCreated } = useWalletContext()
+  const router = useRouter() // Инициализируем роутер Next.js 16
   const { createNewWallet } = useWalletAuth()
 
   const [step, setStep] = useState<"create" | "confirm">("create")
@@ -34,7 +35,13 @@ export function CreateWalletForm({ phraseToEncrypt }: EncryptPhraseFormProps) {
       if (pin === tempPin) {
         try {
           await createNewWallet(phraseToEncrypt, pin)
-          onWalletCreated()
+          
+          clearPin()
+          setTempPin("")
+          
+          // 🚀 СУПЕР-ХОД: Насильно обновляем серверные компоненты! 
+          // Next.js перечитает куку и сразу переключит страницу на Дашборд.
+          router.refresh()
         } catch (err: any) {
           setIsError(true)
           setSubtitle(err.message || "Критическая ошибка шифрования ключей")

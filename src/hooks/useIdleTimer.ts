@@ -2,13 +2,13 @@
 
 import { useEffect, useRef } from 'react'
 import { useWalletAuth } from './useWalletAuth'
-import { useWalletSession } from '@/store/useWalletStore'
+import { useWalletSessionStore } from '@/store/useWalletSessessionStore'
 
 const THROTTLE_DELAY = 4000 
 
 export function useIdleTimer() {
   const { updateSessionTimer } = useWalletAuth()
-  const unhardenedPkHex = useWalletSession((state) => state.unhardenedPkHex)
+  const unhardenedPkHex = useWalletSessionStore((state) => state.unhardenedPkHex)
   const lastSavedRef = useRef<number>(typeof window !== 'undefined' ? Date.now() : 0)
 
   useEffect(() => {

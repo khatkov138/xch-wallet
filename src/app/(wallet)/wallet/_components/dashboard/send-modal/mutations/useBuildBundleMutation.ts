@@ -1,13 +1,13 @@
 import { useMutation } from "@tanstack/react-query"
 import { selectChiaCoins } from "../ChiaCoinSelection"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider";
 
 
 
 
 export function useBuildBundleMutation(ctx: any, unspentCoins: any[], walletAddresses: any[]) {
 
-  const network = useWalletSession((state) => state.network);
+  const network = useUserSettingsStore((state) => state.network);
 
 
   return useMutation({

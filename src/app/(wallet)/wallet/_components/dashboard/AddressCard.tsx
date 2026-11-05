@@ -4,12 +4,12 @@ import React, { useState, useMemo } from "react"
 import { Copy, Check, Loader2, AlertTriangle } from "lucide-react"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
 import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function AddressCard() {
   const [copied, setCopied] = useState(false)
 
-  const network = useWalletSession((state) => state.network)
+  const network = useUserSettingsStore((state) => state.network)
   const isMainnet = network === 'mainnet'
 
   const { addresses, isLoading: isDashboardLoading } = useWalletDashboard()

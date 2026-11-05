@@ -2,9 +2,10 @@
 
 import React, { useState } from "react"
 import { useRouter } from "next/navigation"
-import { PinCodeLayout } from "@/components/PinCodeLayout"
+
 import { useWalletAuth } from "@/hooks/useWalletAuth"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
+import { PinCodeLayout } from "../../_components/PinCodeLayout"
 
 export function UnlockPinForm() {
   const router = useRouter()
@@ -13,7 +14,7 @@ export function UnlockPinForm() {
   const { unlockWithPin, hardResetWallet } = useWalletAuth()
 
   // 2. ДАТЧИК (Реактивная крутилка из стора вместо локального isLocked)
-  const isVerifying = useWalletSession((state) => state.isVerifying)
+  const isVerifying = useWalletSessionStore((state) => state.isVerifying)
 
   //Локальные стейты только для визуальных эффектов анимации
   const [shake, setShake] = useState(false)

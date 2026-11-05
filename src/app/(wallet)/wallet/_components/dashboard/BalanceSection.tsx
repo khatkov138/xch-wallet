@@ -3,7 +3,7 @@
 import React from "react"
 import { RefreshCw } from "lucide-react"
 import { useWalletBalance } from "@/hooks/useWalletBalance"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function BalanceSection() {
   const { 
@@ -11,18 +11,29 @@ export function BalanceSection() {
     fiatBalanceString, 
     isError, 
     isFetching, 
-    refetch, 
-    toggleCurrency 
+    refetch 
   } = useWalletBalance()
 
-  // Достаем состояние сети из твоего глобального стора
-  const network = useWalletSession((state) => state.network)
+  // Достаем состояние сети, текущий статус отображения и сеттер из глобального стора
+  const network = useUserSettingsStore((state) => state.network)
+  const balanceDisplay = useUserSettingsStore((state) => state.balanceDisplay)
+  const setBalanceDisplay = useUserSettingsStore((state) => state.setBalanceDisplay)
+
+  const isXchTop = balanceDisplay === 'xch'
   const isMainnet = network === 'mainnet'
+  const xchTicker = isMainnet ? 'XCH' : 'TXCH'
+
+  // Функция для смены мест через глобальный стор
+  const handleSwap = () => {
+    setBalanceDisplay(isXchTop ? 'fiat' : 'xch')
+  }
 
   return (
-    <section className="text-center py-4 space-y-1 relative">
+    <section className="text-center py-4 relative flex flex-col items-center">
       <div className="absolute inset-0 m-auto w-32 h-16 bg-[#FF2E93]/10 blur-3xl pointer-events-none" />
-      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-2 select-none">
+      
+      {/* Шапка баланса */}
+      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-2 select-none mb-1">
         <span>Доступный баланс</span>
         <button
           onClick={() => refetch()}
@@ -35,21 +46,45 @@ export function BalanceSection() {
         </button>
       </p>
 
-      <h2 className="text-4xl font-black tracking-tight text-white select-all">
-        {balanceXCH} <span className="text-zinc-500 font-medium text-2xl transition-colors duration-150">
-          {isMainnet ? 'XCH' : 'TXCH'}
-        </span>
-      </h2>
+      {/* КОНТЕЙНЕР С РОДНЫМИ ОТСТУПАМИ (h-[72px] держит внешние границы, а внутри родной space-y-1) */}
+      <div className={`flex flex-col w-full h-[72px] justify-center items-center ${
+        isXchTop 
+          ? "flex-col space-y-1" 
+          : "flex-col-reverse space-y-reverse space-y-1"
+      }`}>
+        
+        {/* БЛОК XCH */}
+        <div 
+          onClick={isXchTop ? handleSwap : undefined}
+          className={`tracking-tight text-white select-none transition-all duration-150 ${
+            isXchTop 
+              ? "text-4xl font-black cursor-pointer active:scale-98" 
+              : "text-xs font-bold text-zinc-400"
+          }`}
+          title={isXchTop ? "Поменять валюты местами" : undefined}
+        >
+          {balanceXCH}{" "}
+          <span className={`font-medium transition-colors duration-150 ${isXchTop ? "text-2xl text-zinc-500" : "text-[10px] text-zinc-500"}`}>
+            {xchTicker}
+          </span>
+        </div>
 
-      <p 
-        onClick={toggleCurrency}
-        className={`text-xs font-bold transition-colors duration-200 select-none ${
-          isError ? "text-red-500" : "text-zinc-400 hover:text-white cursor-pointer active:scale-98 transition-all"
-        }`}
-        title="Нажмите для переключения валюты (RUB / USD)"
-      >
-        {fiatBalanceString}
-      </p>
+        {/* БЛОК ФИАТА */}
+        <div 
+          onClick={!isXchTop ? handleSwap : undefined}
+          className={`transition-all duration-150 select-none ${
+            isError ? "text-red-500" : ""
+          } ${
+            isXchTop 
+              ? "text-xs font-bold text-zinc-400" 
+              : "text-4xl font-black text-white cursor-pointer active:scale-98"
+          }`}
+          title={!isXchTop ? "Поменять валюты местами" : undefined}
+        >
+          {fiatBalanceString}
+        </div>
+
+      </div>
     </section>
   )
 }

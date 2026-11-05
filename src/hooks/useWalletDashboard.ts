@@ -2,29 +2,31 @@
 
 import { useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { useWalletSession } from "@/store/useWalletStore"
+// ИМПОРТЫ: Подключаем новые сторы
+
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function useWalletDashboard() {
-  const unhardenedPkHex = useWalletSession((state: any) => state.unhardenedPkHex)
-  const activeIndexes = useWalletSession((state: any) => state.activeIndexes)
-  const setActiveIndexes = useWalletSession((state: any) => state.setActiveIndexes)
-  const isVerifying = useWalletSession((state: any) => state.isVerifying)
-  const isScreenLocked = useWalletSession((state: any) => state.isScreenLocked)
+  // Читаем данные авторизации из сессии
+  const unhardenedPkHex = useWalletSessionStore((state: any) => state.unhardenedPkHex)
+  const activeIndexes = useWalletSessionStore((state: any) => state.activeIndexes)
+  const setActiveIndexes = useWalletSessionStore((state: any) => state.setActiveIndexes)
+  const isVerifying = useWalletSessionStore((state: any) => state.isVerifying)
+  const isScreenLocked = useWalletSessionStore((state: any) => state.isScreenLocked)
   
-  // 🎯 Достаем активную сеть из Zustand стора
-  const network = useWalletSession((state: any) => state.network)
+  // 🎯 Читаем активную сеть из стора настроек пользователя (localStorage)
+  const network = useUserSettingsStore((state: any) => state.network)
 
   const isReadyToFetch = !isVerifying && !isScreenLocked && !!unhardenedPkHex
   const currentMode = !activeIndexes ? "heavy" : "light"
 
   const query = useQuery({
-    // 🎯 ФИКС 1: Добавили network в queryKey. Теперь при смене сети кэш изолирован,
-    // и TanStack Query мгновенно делает новый чистый запрос для тестнета/мейннета.
     queryKey: ["wallet-dashboard", network, unhardenedPkHex, activeIndexes],
     queryFn: async () => {
       const params = new URLSearchParams({
         publicKeyHex: unhardenedPkHex,
-        network: network, // 🎯 ФИКС 2: Передаем сеть в GET-параметры бэкенду
+        network: network,
         mode: currentMode,
         limit: "200",
         ...(activeIndexes && { active_indexes: activeIndexes })
@@ -44,7 +46,6 @@ export function useWalletDashboard() {
     select: (data) => data
   })
 
-  // СИНХРОНИЗАЦИЯ АКТИВНЫХ ИНДЕКСОВ БЕЗ ЦИКЛИЧЕСКОЙ ЗАВИСИМОСТИ
   useEffect(() => {
     if (query.data?.meta?.active_indexes) {
       const freshIndexesStr = query.data.meta.active_indexes.join(",")

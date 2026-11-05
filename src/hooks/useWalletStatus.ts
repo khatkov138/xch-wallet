@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery, skipToken } from '@tanstack/react-query';
-import { SocketPayload, QUERY_KEY, PeerInfo } from './useWalletWs';
+import { SocketPayload, QUERY_KEY} from './useWalletWs';
 
 export interface DerivedNodeStatus {
   network: string;
@@ -15,7 +15,7 @@ export interface DerivedNodeStatus {
   networkSpaceTib: string;
   peakTime: string | null;
   mempoolSize: number;
-  peersList: PeerInfo[];
+  peersList: any[];
   totalPeers: number;
 }
 

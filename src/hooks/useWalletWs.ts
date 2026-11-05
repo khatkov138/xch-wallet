@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useWalletSession } from "@/store/useWalletStore";
+import { useUserSettingsStore } from '@/providers/UserSettnigsProvider';
 
 export interface SocketPayload {
   success: boolean;
@@ -20,11 +20,11 @@ export const WS_URL = 'ws://localhost:8000/ws/client';
 
 export function useWalletWs() {
   const queryClient = useQueryClient();
-  const network = useWalletSession((state) => state.network); // Считываем сеть из Zustand
+  const network = useUserSettingsStore((state) => state.network); // Твой привычный вызов
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSentNetworkRef = useRef<string | null>(null);
 
-  // Эффект 1: Управление жизненным циклом WebSocket соединения (монтируется ОДИН раз)
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -37,7 +37,7 @@ export function useWalletWs() {
         networkName: old?.networkName,
         blockchain_state: old?.blockchain_state,
         syncData: old?.syncData,
-        peersList: [], 
+        peersList: [],
       }));
     };
 
@@ -50,16 +50,14 @@ export function useWalletWs() {
       wsRef.current.onopen = () => {
         console.log('[✅ WALLET-WS] Соединение установлено');
         queryClient.setQueryData<SocketPayload | undefined>(QUERY_KEY, (old) => old ? { ...old, error: undefined } : undefined);
-        
-        // Сразу при открытии синхронизируем бэкенд с текущей сетью из Zustand
-        const currentNetwork = useWalletSession.getState().network;
-        wsRef.current?.send(JSON.stringify({ action: "SET_NETWORK", network: currentNetwork }));
+        wsRef.current?.send(JSON.stringify({ action: "SET_NETWORK", network: network }));
+        lastSentNetworkRef.current = network;
       };
 
       wsRef.current.onmessage = (event) => {
         try {
           const payload: SocketPayload = JSON.parse(event.data);
-          
+
           if (payload.error) {
             const translatedErr = (payload.error === 'NODE_OFFLINE' || payload.error === 'WAITING_FOR_NODE_CONNECT') ? 'RPC_DOWN' : payload.error;
             setQueryError(translatedErr);
@@ -86,6 +84,7 @@ export function useWalletWs() {
           wsRef.current.onopen = wsRef.current.onmessage = wsRef.current.onerror = wsRef.current.onclose = null;
           wsRef.current = null;
         }
+        lastSentNetworkRef.current = null;
         if (!reconnectTimeoutRef.current) reconnectTimeoutRef.current = setTimeout(connect, 4000);
       };
     };
@@ -96,13 +95,13 @@ export function useWalletWs() {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); }
     };
-  }, [queryClient]);
+  }, [queryClient, network]);
 
-  // 🎯 Эффект 2: Реактивная отправка события смены сети БЕЗ разрыва соединения
   useEffect(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && lastSentNetworkRef.current !== network) {
       console.log(`[🚀 WALLET-WS] Отправка команды переключения сети на бэкенд: ${network}`);
       wsRef.current.send(JSON.stringify({ action: "SET_NETWORK", network }));
+      lastSentNetworkRef.current = network;
     }
   }, [network]);
 

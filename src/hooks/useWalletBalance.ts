@@ -2,9 +2,8 @@
 
 import { useMemo } from "react"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
-
 import { useQuery } from "@tanstack/react-query"
-import { useWalletSession } from "@/store/useWalletStore"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 const INTERNAL_NEXT_PRICES_API = "/api/nextjs/prices"
 
@@ -28,11 +27,11 @@ export function formatStringBalance(xchString: string | number, decimals: number
 export function useWalletBalance() {
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletDashboard()
   
-  // 🎯 Подключаем глобальный Zustand стор вместо локального useState
-  const currency = useWalletSession((state) => state.currency)
-  const setCurrency = useWalletSession((state) => state.setCurrency)
+  // Атомарные селекторы Zustand для стабильности React 19
+  const currency = useUserSettingsStore((state) => state.currency)
+  const setCurrency = useUserSettingsStore((state) => state.setCurrency)
 
-  const { data: marketData, isError: isPriceError } = useQuery<PricesResponse, Error>({
+  const { data: marketData, isError: isPriceError, isLoading: isPriceLoading } = useQuery<PricesResponse, Error>({
     queryKey: ["xchMarketPriceNextRouter"],
     queryFn: async () => {
       const res = await fetch(INTERNAL_NEXT_PRICES_API);
@@ -43,14 +42,23 @@ export function useWalletBalance() {
     gcTime: 30000
   });
 
-  const isError = Boolean(error)
-  const balanceXCH = isError ? "0.0000" : formatStringBalance(realXCHStr, 4)
+  const isNodeError = Boolean(error)
+  const isError = isNodeError || isPriceError
+
+  // Если ошибка ноды — жестко выводим 0.0000
+  const balanceXCH = isNodeError ? "0.0000" : formatStringBalance(realXCHStr, 4)
+
+  // 🎯 Флаг для скелетона в твоем UI (идет загрузка ноды или цены)
+  const isLoading = isFetching && (!marketData || isNodeError)
 
   const fiatBalanceString = useMemo(() => {
-    if (isError) return "⚠️ Ошибка обновления данных"
+    // 🛠️ Если произошел сбой — отдаем красивый дефолт 0.00 в выбранной валюте
+    if (isError || !marketData) {
+      return currency === "RUB" ? "≈ 0.00 ₽" : "≈ $0.00 USD"
+    }
     
-    const usdPrice = marketData?.usd || 0
-    const rubPrice = marketData?.rub || 0
+    const usdPrice = marketData.usd || 0
+    const rubPrice = marketData.rub || 0
     
     if (currency === "RUB") {
       const valueInRub = numericXCH * rubPrice
@@ -61,9 +69,8 @@ export function useWalletBalance() {
     }
   }, [isError, currency, numericXCH, marketData])
 
-  // 🎯 Переключаем глобально, состояние автоматически обновится во всем приложении
   const toggleCurrency = () => {
-    if (!isError) {
+    if (!isNodeError) {
       setCurrency(currency === "RUB" ? "USD" : "RUB")
     }
   }
@@ -73,7 +80,8 @@ export function useWalletBalance() {
     numericXCH,
     fiatBalanceString,
     currency,
-    isError: isError || isPriceError,
+    isError,
+    isLoading, // ⚡ Прокидываем наружу для рендера скелетонов
     isFetching,
     refetch,
     toggleCurrency

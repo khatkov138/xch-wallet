@@ -1,12 +1,14 @@
 'use client'
 
-import React, { useState, useCallback } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { KeyRound, PlusCircle } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
-import { ImportPhraseForm } from "./_components/auth/import-wallet/ImportPhraseForm"
-import { GeneratePhraseForm } from "./_components/auth/GeneratePhraseForm"
-import { CreateWalletForm } from "./_components/auth/CreateWalletForm"
-import { useWalletContext } from "../WalletContext"
+
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore" // 🛠️ Добавили подписку на сессию
+import { CreateWalletForm } from "./auth/CreateWalletForm"
+import { ImportPhraseForm } from "./auth/import-wallet/ImportPhraseForm"
+import { GeneratePhraseForm } from "./auth/GeneratePhraseForm"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 function AuthTabsContainer({ 
   currentTab, 
@@ -56,7 +58,8 @@ function AuthTabsContainer({
 }
 
 export default function AuthClient() {
-  const { network } = useWalletContext()
+ 
+
   const [currentTab, setCurrentTab] = useState<"phrase" | "create">("phrase")
   const [showPin, setShowPin] = useState(false)
   const [phraseToEncrypt, setPhraseToEncrypt] = useState("")
@@ -78,7 +81,7 @@ export default function AuthClient() {
               Вход в <span className="bg-gradient-to-r from-[#FF2E93] to-[#B82EFF] bg-clip-text text-transparent">XCHIA Wallet</span>
             </h1>
             <p className="text-xs font-semibold text-zinc-400 leading-relaxed">
-              Управляй своим балансом Chia (XCH). Текущая сеть: <span className="text-[#FF2E93] font-bold uppercase">{network}</span>. Выбери вход по ключам или генерацию новой локальной сессии.
+              Управляй своим балансом Chia (XCH). Выбери вход по ключам или генерацию новой локальной сессии.
             </p>
           </section>
 

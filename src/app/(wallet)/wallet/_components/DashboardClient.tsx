@@ -3,14 +3,15 @@
 import { useState } from "react"
 
 
-import { useWalletWs } from "@/hooks/useWalletWs"
-import { BalanceSection } from "./_components/dashboard/BalanceSection"
-import { AddressCard } from "./_components/dashboard/AddressCard"
-import { ActionButtons } from "./_components/dashboard/ActionButtons"
-import { ActivityList } from "./_components/dashboard/ActivityList"
-import { BackupCard } from "./_components/dashboard/BackupCard"
-import { ReceiveModal } from "./_components/dashboard/ReceiveModal"
-import { SendModal } from "./_components/dashboard/send-modal/SendModal"
+
+import { BalanceSection } from "./dashboard/BalanceSection"
+import { AddressCard } from "./dashboard/AddressCard"
+import { ActionButtons } from "./dashboard/ActionButtons"
+import { ActivityList } from "./dashboard/ActivityList"
+import { BackupCard } from "./dashboard/BackupCard"
+import { ReceiveModal } from "./dashboard/ReceiveModal"
+import { SendModal } from "./dashboard/send-modal/SendModal"
+
 
 export default function DashboardClient() {
   const [isReceiveOpen, setIsReceiveOpen] = useState(false)
