@@ -1,19 +1,19 @@
-'use client'
+"use client"
 
-import { createStore } from 'zustand'
-import { WalletLanguage, DEFAULT_LANGUAGE, isSupportedLanguage } from '@/config/i18n'
-
-const isClient = typeof window !== 'undefined'
+import { createStore } from "zustand"
+import { persist, createJSONStorage, StateStorage } from "zustand/middleware"
+import { getCookie, setCookie, deleteCookie } from 'cookies-next'
+import { WalletLanguage, DEFAULT_LANGUAGE } from '@/config/i18n'
 
 export type WalletCurrency = 'RUB' | 'USD'
 
-// Структура настроек, которые шарятся с сервером через Cookies
+// Структура настроек кошелька
 export interface UserSettingsProps {
   network: 'mainnet' | 'testnet11'
   currency: WalletCurrency
   balanceDisplay: 'xch' | 'fiat'
   language: WalletLanguage
-  isAuth: boolean // 🔐 Маркер авторизации для SSR
+  isAuth: boolean
 }
 
 // Интерфейс стора: данные + экшены
@@ -25,65 +25,48 @@ export interface UserSettingsState extends UserSettingsProps {
   setIsAuth: (isAuth: boolean) => void
 }
 
-// Адаптер для точечной записи настроек в куки браузера
-export const cookieStorageApi = {
-  setItem: (name: string, value: string): void => {
-    if (!isClient) return
-    const expires = new Date()
-    expires.setTime(expires.getTime() + 365 * 24 * 60 * 60 * 1000) // 1 год
-    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;SameSite=Lax`
-  }
+// 🌐 Чистый куки-адаптер один в один как в твоем примере
+const cookieStorage: StateStorage = {
+  getItem: (name) => (getCookie(name) as string) ?? null,
+  setItem: (name, value) => setCookie(name, value, {
+    maxAge: 60 * 60 * 24 * 365, // 1 год
+    path: '/',
+    sameSite: 'lax'
+  }),
+  removeItem: (name) => deleteCookie(name),
 }
 
-// 🏭 ОПТИМИЗИРОВАННАЯ ФАБРИКА СТОРА НАСТРОЕК
-export const createUserSettingsStore = (storeCookies?: Array<{ name: string; value: string }>) => {
-  
-  // Безопасный поиск значения куки в переданном массиве
-  const getVal = (name: string) => {
-    if (!storeCookies || !Array.isArray(storeCookies)) return undefined
-    return storeCookies.find(c => c.name === name)?.value
-  }
+// 🏭 ЭТАЛОННАЯ ФАБРИКА СТОРА КОШЕЛЬКА
+export const createUserSettingsStore = (initProps: Partial<UserSettingsProps>) => {
+  return createStore<UserSettingsState>()(
+    persist(
+      (set) => ({
+        // Базовые фолбеки
+        network: initProps.network || 'mainnet',
+        language: initProps.language || DEFAULT_LANGUAGE,
+        currency: initProps.currency || (initProps.language === 'ru' ? 'RUB' : 'USD'),
+        balanceDisplay: initProps.balanceDisplay || 'xch',
+        isAuth: initProps.isAuth ?? false,
 
-  // Накатываем дефолты только если кук физически нет в массиве
-  const initProps: UserSettingsProps = {
-    network: getVal('xchia-network') === 'testnet11' ? 'testnet11' : 'mainnet',
-    language: getVal('xchia-lang') && isSupportedLanguage(getVal('xchia-lang')!) ? (getVal('xchia-lang') as WalletLanguage) : DEFAULT_LANGUAGE,
-    currency: getVal('xchia-currency') === 'USD' ? 'USD' : 'RUB',
-    balanceDisplay: getVal('xchia-balance-display') === 'fiat' ? 'fiat' : 'xch',
-    isAuth: getVal('xchia-is-auth') === 'true'
-  }
-
-  // Возвращаем чистый реактивный стор. Настройки сохраняются в куки строго при вызове экшенов.
-  return createStore<UserSettingsState>()((set) => ({
-    ...initProps,
-
-    setNetwork: (network) => {
-      cookieStorageApi.setItem('xchia-network', network)
-      set({ network })
-    },
-    
-    setCurrency: (currency) => {
-      cookieStorageApi.setItem('xchia-currency', currency)
-      set({ currency })
-    },
-    
-    setBalanceDisplay: (balanceDisplay) => {
-      cookieStorageApi.setItem('xchia-balance-display', balanceDisplay)
-      set({ balanceDisplay })
-    },
-    
-    setLanguage: (language) => {
-      const nextCurrency: WalletCurrency = language === 'ru' ? 'RUB' : 'USD'
-      
-      cookieStorageApi.setItem('xchia-lang', language)
-      cookieStorageApi.setItem('xchia-currency', nextCurrency) // Авто-синк валюты при смене языка
-      
-      set({ language, currency: nextCurrency })
-    },
-    
-    setIsAuth: (isAuth) => {
-      cookieStorageApi.setItem('xchia-is-auth', String(isAuth))
-      set({ isAuth })
-    }
-  }))
+        // Кристально чистые экшены
+        setNetwork: (network) => set({ network }),
+        setCurrency: (currency) => set({ currency }),
+        setBalanceDisplay: (balanceDisplay) => set({ balanceDisplay }),
+        setLanguage: (language) => set({ language, currency: language === 'ru' ? 'RUB' : 'USD' }),
+        setIsAuth: (isAuth) => set({ isAuth })
+      }),
+      {
+        name: 'xchia-user-settings', // Имя единой куки
+        storage: createJSONStorage(() => cookieStorage),
+        skipHydration: true, // Исключаем конфликты гидратации React 19
+        partialize: (state) => ({
+          network: state.network,
+          language: state.language,
+          currency: state.currency,
+          balanceDisplay: state.balanceDisplay,
+          isAuth: state.isAuth
+        }),
+      }
+    )
+  )
 }

@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { cookies } from 'next/headers' // 🍪 Импортируем утилиту для нативного чтения кук Next.js
 import { Providers } from "@/providers/Providers"; 
 import { UserSettingsContextProvider } from "@/providers/UserSettnigsProvider";
+
 import "./globals.css";
+import { getServerSettings } from "@/lib/utils/server-utils";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -49,9 +50,8 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // 🍪 Достаем чистый оригинальный массив серверных кук в две строчки без оверхеда
-  const cookieStore = await cookies()
-  const cookieList = cookieStore.getAll()
+  // 🎯 ИДЕАЛЬНО: Ровно одна асинхронная строчка без лапши и траи-кетчей
+  const serverSettings = await getServerSettings()
 
   return (
     <html
@@ -60,10 +60,10 @@ export default async function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-zinc-950 text-white font-sans select-none">
         
-        {/* 📦 УРОВЕНЬ 1: Закидываем готовый массив кук на самый верхний уровень приложения */}
-        <UserSettingsContextProvider storeCookies={cookieList}>
+        {/* 📦 УРОВЕНЬ 1: Прокидываем отвалидированный объект настроек прямо в контекст */}
+        <UserSettingsContextProvider serverSettings={serverSettings}>
           
-          {/* 🚀 УРОВЕНЬ 2: Провайдеры кэша TanStack Query и WebSocket-подключений */}
+          {/* 🚀 УРОВЕНЬ 2: Твой провайдер кэша TanStack Query и WebSocket-демона */}
           <Providers>
             {children}
           </Providers>
