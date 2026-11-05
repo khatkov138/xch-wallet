@@ -8,7 +8,8 @@ import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 export function BalanceSection() {
   const { 
     balanceXCH, 
-    fiatBalanceString, 
+    fiatValue, // 🔢 Принимаем чистое число вместо fiatBalanceString
+    currency,  // 💱 Принимаем выбранную валюту ('RUB' | 'USD')
     isError, 
     isFetching, 
     refetch 
@@ -19,6 +20,7 @@ export function BalanceSection() {
   const balanceDisplay = useUserSettingsStore((state) => state.balanceDisplay)
   const setBalanceDisplay = useUserSettingsStore((state) => state.setBalanceDisplay)
 
+ //console.log(balanceDisplay,"balanceDisplay" )
   const isXchTop = balanceDisplay === 'xch'
   const isMainnet = network === 'mainnet'
   const xchTicker = isMainnet ? 'XCH' : 'TXCH'
@@ -72,6 +74,7 @@ export function BalanceSection() {
         {/* БЛОК ФИАТА */}
         <div 
           onClick={!isXchTop ? handleSwap : undefined}
+          suppressHydrationWarning={true} // 🚀 Гарантирует тишину при несовпадении локалей SSR и браузера
           className={`transition-all duration-150 select-none ${
             isError ? "text-red-500" : ""
           } ${
@@ -81,7 +84,12 @@ export function BalanceSection() {
           }`}
           title={!isXchTop ? "Поменять валюты местами" : undefined}
         >
-          {fiatBalanceString}
+          {/* 💎 Рендерим локализованную строку прямо в интерфейсе на основе чистых данных */}
+          {currency === "RUB" ? (
+            `≈ ${fiatValue.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`
+          ) : (
+            `≈ $${fiatValue.toFixed(2)} USD`
+          )}
         </div>
 
       </div>

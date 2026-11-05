@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { cookies } from 'next/headers' // 🍪 Импортируем утилиту чтения кук Next.js 16
-import { Providers } from "@/providers/Providers"; // Наш импорт провайдера кэша
-
-import { DEFAULT_LANGUAGE, isSupportedLanguage } from '@/config/i18n'
-import { UserSettingsProps } from '@/store/useUserSettingsStore'
-import "./globals.css";
+import { cookies } from 'next/headers' // 🍪 Импортируем утилиту для нативного чтения кук Next.js
+import { Providers } from "@/providers/Providers"; 
 import { UserSettingsContextProvider } from "@/providers/UserSettnigsProvider";
-
-// ⚡ Разрешаем асинхронное динамическое чтение кук при переходах на верхнем уровне
-export const instant = false
+import "./globals.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,8 +21,6 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://xchia.io"),
   keywords: ["Chia Network", "XCH", "Chia кошелек", "XCHIA", "web wallet", "non-custodial", "crypto wallet", "Chia RPC"],
   authors: [{ name: "XCHIA Team" }],
-  
-  // Open Graph для Telegram, ВК, Discord и Facebook
   openGraph: {
     title: "XCHIA — Безопасный веб-кошелек для Chia (XCH)",
     description: "Работает прямо в браузере. Локальное шифрование, открытый исходный код, моментальная синхронизация.",
@@ -36,42 +28,20 @@ export const metadata: Metadata = {
     siteName: "XCHIA Wallet",
     locale: "ru_RU",
     type: "website",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Интерфейс веб-кошелька XCHIA",
-      },
-    ],
+    images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "Интерфейс веб-кошелька XCHIA" }],
   },
-
-  // Twitter Cards
   twitter: {
     card: "summary_large_image",
     title: "XCHIA — Next-Gen Chia Network Web Wallet",
     description: "Premium Non-Custodial Real-Time Wallet for Chia (XCH). 100% Open Source.",
     images: ["/og-image.png"],
   },
-
-  // Управление роботами
   robots: {
     index: true,
     follow: true,
-    googleBot: {
-      index: true,
-      follow: true,
-      "max-video-preview": -1,
-      "max-image-preview": "large",
-      "max-snippet": -1,
-    },
+    googleBot: { index: true, follow: true, "max-video-preview": -1, "max-image-preview": "large", "max-snippet": -1 },
   },
-
-  // Иконки и мобильный Web App
-  icons: {
-    icon: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
-  },
+  icons: { icon: "/favicon.ico", apple: "/apple-touch-icon.png" },
 };
 
 export default async function RootLayout({
@@ -79,33 +49,21 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // 🍪 Читаем куки на сервере для первичного сидирования фабрики Zustand
+  // 🍪 Достаем чистый оригинальный массив серверных кук в две строчки без оверхеда
   const cookieStore = await cookies()
-  const cookieLang = cookieStore.get('xchia-lang')?.value
-  const cookieNet = cookieStore.get('xchia-network')?.value
-
-  const lang = cookieLang && isSupportedLanguage(cookieLang) ? cookieLang : DEFAULT_LANGUAGE
-  const network = cookieNet === 'mainnet' ? 'mainnet' : 'testnet11'
-
-  // 🔥 Твое дожатое решение типизации: сужаем string до литералов через as UserSettingsProps
-  const serverSettings = {
-    network,
-    language: lang,
-    currency: lang === 'ru' ? 'RUB' : 'USD',
-    balanceDisplay: 'xch'
-  } as UserSettingsProps
+  const cookieList = cookieStore.getAll()
 
   return (
     <html
-      lang={lang}
+      lang="ru" 
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
       <body className="min-h-full flex flex-col bg-zinc-950 text-white font-sans select-none">
         
-        {/* 📦 1. УРОВЕНЬ 1: Накачиваем серверные куки в Zustand до маунта сокетов */}
-        <UserSettingsContextProvider serverSettings={serverSettings}>
+        {/* 📦 УРОВЕНЬ 1: Закидываем готовый массив кук на самый верхний уровень приложения */}
+        <UserSettingsContextProvider storeCookies={cookieList}>
           
-          {/* 🚀 УРОВЕНЬ 2: Твой провайдер кэша TanStack Query и WebSocket-демона */}
+          {/* 🚀 УРОВЕНЬ 2: Провайдеры кэша TanStack Query и WebSocket-подключений */}
           <Providers>
             {children}
           </Providers>

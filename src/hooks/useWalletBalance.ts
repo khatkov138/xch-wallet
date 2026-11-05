@@ -27,11 +27,10 @@ export function formatStringBalance(xchString: string | number, decimals: number
 export function useWalletBalance() {
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletDashboard()
   
-  // Атомарные селекторы Zustand для стабильности React 19
   const currency = useUserSettingsStore((state) => state.currency)
   const setCurrency = useUserSettingsStore((state) => state.setCurrency)
 
-  const { data: marketData, isError: isPriceError, isLoading: isPriceLoading } = useQuery<PricesResponse, Error>({
+  const { data: marketData, isError: isPriceError } = useQuery<PricesResponse, Error>({
     queryKey: ["xchMarketPriceNextRouter"],
     queryFn: async () => {
       const res = await fetch(INTERNAL_NEXT_PRICES_API);
@@ -45,28 +44,17 @@ export function useWalletBalance() {
   const isNodeError = Boolean(error)
   const isError = isNodeError || isPriceError
 
-  // Если ошибка ноды — жестко выводим 0.0000
   const balanceXCH = isNodeError ? "0.0000" : formatStringBalance(realXCHStr, 4)
-
-  // 🎯 Флаг для скелетона в твоем UI (идет загрузка ноды или цены)
   const isLoading = isFetching && (!marketData || isNodeError)
 
-  const fiatBalanceString = useMemo(() => {
-    // 🛠️ Если произошел сбой — отдаем красивый дефолт 0.00 в выбранной валюте
-    if (isError || !marketData) {
-      return currency === "RUB" ? "≈ 0.00 ₽" : "≈ $0.00 USD"
-    }
+  // 🎯 ВЫЧИСЛЯЕМ ТОЛЬКО ЧИСЛО: Никаких знаков валют и кастомных нулей текстом
+  const fiatValue = useMemo(() => {
+    if (isError || !marketData) return 0
     
     const usdPrice = marketData.usd || 0
     const rubPrice = marketData.rub || 0
     
-    if (currency === "RUB") {
-      const valueInRub = numericXCH * rubPrice
-      return `≈ ${valueInRub.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`
-    } else {
-      const valueInUsd = numericXCH * usdPrice
-      return `≈ $${valueInUsd.toFixed(2)} USD`
-    }
+    return currency === "RUB" ? numericXCH * rubPrice : numericXCH * usdPrice
   }, [isError, currency, numericXCH, marketData])
 
   const toggleCurrency = () => {
@@ -78,10 +66,10 @@ export function useWalletBalance() {
   return {
     balanceXCH,
     numericXCH,
-    fiatBalanceString,
+    fiatValue, // 🔢 Отдаем чистое число (например: 0 или 142.53)
     currency,
     isError,
-    isLoading, // ⚡ Прокидываем наружу для рендера скелетонов
+    isLoading, 
     isFetching,
     refetch,
     toggleCurrency

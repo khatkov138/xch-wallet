@@ -1,6 +1,11 @@
+import React from "react"
 import { Background } from "@/components/Background"
 import { WalletHeaderContainer } from "./_components/WalletHeaderContainer"
 import { WalletFooter } from "./_components/WalletFooter"
+
+// ⚡ ИСПРАВЛЕНИЕ ДЛЯ NEXT.JS 16: Разрешаем асинхронное чтение кук при переходе,
+// полностью отключая ворнинги валидатора Instant Navigation для зоны кошелька.
+export const instant = false
 
 interface LayoutProps {
   children: React.ReactNode

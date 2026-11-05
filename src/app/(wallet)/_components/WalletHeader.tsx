@@ -33,7 +33,7 @@ export const WalletHeader = React.memo(function WalletHeader({ showLogout, onLog
   const currency = useUserSettingsStore((state) => state.currency)
   const language = useUserSettingsStore((state) => state.language)
   const isAuth = useUserSettingsStore((state) => state.isAuth) // 🔐 Наш легкий маркер авторизации для скрытия блоков
-
+console.log(network,currency, language, isAuth)
   const setNetwork = useUserSettingsStore((state) => state.setNetwork)
   const setCurrency = useUserSettingsStore((state) => state.setCurrency)
   const setLanguage = useUserSettingsStore((state) => state.setLanguage)
