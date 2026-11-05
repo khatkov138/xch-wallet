@@ -60,7 +60,7 @@ export function AddressCard() {
               
               <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block w-[240px] p-2.5 bg-[#0c0c0e] border border-zinc-800 rounded-xl shadow-[0_10px_25px_rgba(0,0,0,0.6)] text-[9px] font-bold text-zinc-400 uppercase tracking-wider leading-normal z-50 animate-in fade-in zoom-in-95 duration-100">
                 <span className="text-[#FF2E93] font-black block mb-0.5">⚠️ ТЕСТОВАЯ СЕТЬ TESTNET11</span>
-                Вы переключены на тестнет. Адреса полностью отличаются от основной сети XCH.
+                Вы переключены на тестовую сеть. Адреса полностью отличаются от основной сети XCH.
                 <div className="absolute top-full left-4 border-4 border-transparent border-t-[#0c0c0e]" />
               </div>
             </div>

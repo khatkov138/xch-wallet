@@ -4,8 +4,11 @@ import React, { useEffect, useState } from "react"
 import Link from "next/link"
 import { Server } from "lucide-react"
 import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function NodeStatusBadge() {
+  // 🏭 Достаем активную сеть кошелька из нашего единого Zustand-куки стора
+  const network = useUserSettingsStore((state) => state.network)
   const { nodeData, isPythonDown, isRpcDown } = useWalletStatus()
   const [isClientReady, setIsClientReady] = useState(false)
   
@@ -13,18 +16,21 @@ export function NodeStatusBadge() {
     setIsClientReady(true)
   }, [])
 
+  // Красивое форматирование имени текущей сети
+  const displayNetwork = network === 'mainnet' ? 'Mainnet' : 'Testnet11'
+
   // ─── 1. СЕРВЕРНЫЙ ПРОХОД И ПЕРВИЧНАЯ ЗАГРУЗКА ───
   // Показываем стабильное нейтральное состояние до гидратации и до первого пакета
   if (!isClientReady || (!nodeData && !isPythonDown && !isRpcDown)) {
     return (
       <Link
-        href="/status"
-        className="flex items-center gap-1.5 text-zinc-650 hover:text-zinc-500 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase"
+        href="/nodes/status"
+        className="flex items-center gap-1.5 text-zinc-650 hover:text-zinc-500 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase font-mono"
         title="Подключение к узлу мониторинга..."
       >
         <Server size={12} className="text-zinc-650 transition-colors duration-300" />
         <span>
-          Сеть:{' '}
+          {displayNetwork} :{' '}
           <span className="text-zinc-650 inline-block min-w-[55px] text-left">
             Online
           </span>
@@ -52,13 +58,13 @@ export function NodeStatusBadge() {
 
   return (
     <Link
-      href="/explorer/status"
-      className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-400 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase"
+      href="/nodes/status" // 🚀 Перенаправляет строго на наш новый выделенный роут
+      className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-400 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase font-mono"
       title="Открыть панель мониторинга сети Chia"
     >
       <Server size={12} className={`${statusColorClass} transition-colors duration-350`} />
       <span>
-        Сеть:{' '}
+        {displayNetwork} :{' '}
         <span className={`${statusColorClass} inline-block min-w-[55px] text-left transition-colors duration-350`}>
           {nodeStatusText}
         </span>
