@@ -2,10 +2,8 @@ import os
 import httpx
 import time
 from fastapi import APIRouter, HTTPException, Query
-from chia_rs import G1Element, Coin  # 🌟 Импортируем Coin для нативного расчета ID
+from chia_rs import G1Element, Coin
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
-
-# Импортируем утилиты из shared / config
 from shared import get_wallet_pk_unhardened
 from shared.config import get_network_config
 
@@ -14,25 +12,16 @@ GAP, MAX_LIM = 40, 1000
 
 async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncClient, rpc_url: str) -> dict:
     print(f"🚀 [RPC NODE REQUEST] Сканируем пачку индексов: от {min(idxs)} до {max(idxs)} (Всего: {len(idxs)} адресов)")
-    
     ph_map, addrs = {}, []
     for i in idxs:
         wallet_pk = get_wallet_pk_unhardened(master_pk, i)
         ph = puzzle_for_pk(wallet_pk).get_tree_hash()
         ph_hex = ph.hex().lower()
-        
         pubkey_hex_string = "0x" + bytes(wallet_pk).hex()
         ph_map[ph_hex] = {"index": i}
-        
         addrs.append({
-            "index": i, 
-            "puzzle_hash": f"0x{ph_hex}", 
-            "address_pubkey_hex": pubkey_hex_string, 
-            "xch": "0.0", 
-            "mojo": 0, 
-            "coins_count": 0
+            "index": i, "puzzle_hash": f"0x{ph_hex}", "address_pubkey_hex": pubkey_hex_string, "xch": "0.0", "mojo": 0, "coins_count": 0
         })
-        
     try:
         response = await client.post(
             f"{rpc_url}/get_coin_records_by_puzzle_hashes", 
@@ -43,12 +32,9 @@ async def scan_chunk(master_pk: G1Element, idxs: list[int], client: httpx.AsyncC
     except Exception as rpc_err:
         print(f"❌ [CRITICAL RPC ERROR] Не удалось связаться с нодой: {str(rpc_err)}")
         raise HTTPException(status_code=500, detail=f"RPC Connection Failed: {str(rpc_err)}")
-        
     if not res.get("success"): 
         node_error = res.get('error') or "Unknown Chia RPC error (empty error field)"
-        print(f"❌ [NODE ERROR REPORTED]: {node_error}")
         raise HTTPException(status_code=400, detail=f"Node Err: {node_error}")
-        
     return {"records": res.get("coin_records", []), "ph_map": ph_map, "addresses": addrs}
 
 @wallet_router.get("/dashboard")
@@ -62,11 +48,10 @@ async def get_wallet_dashboard(
     try:
         cfg = get_network_config(network)
         cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
-        
         master_pk = G1Element.from_bytes(bytes.fromhex(publicKeyHex.replace("0x", "")))
         records, global_map, global_addrs, total_scanned = [], {}, [], 0
         
-        print(f"\n--- 📥 ВХОДЯЩИЙ ЗАПРОС DASHBOARD | Сеть: {network.upper()} | Режим: {mode.upper()} | Active Indexes: {active_indexes} ---")
+        print(f"\n--- 📥 ВХОДЯЩИЙ ЗАПРОС DASHBOARD | Сеть: {network.upper()} | Режим: {mode.upper()} ---")
 
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as client:
             if mode == "heavy" or not active_indexes:
@@ -79,23 +64,16 @@ async def get_wallet_dashboard(
                     global_map.update(chunk["ph_map"])
                     global_addrs.extend(chunk["addresses"])
                     total_scanned += len(idxs)
-                    
-                    max_act = max([chunk["ph_map"][r["coin"]["puzzle_hash"].replace("0x", "")]["index"] 
-                                   for r in chunk["records"] if r["coin"]["puzzle_hash"].replace("0x", "") in chunk["ph_map"]], default=-1)
-                    
+                    max_act = max([chunk["ph_map"][r["coin"]["puzzle_hash"].replace("0x", "")]["index"] for r in chunk["records"] if r["coin"]["puzzle_hash"].replace("0x", "") in chunk["ph_map"]], default=-1)
                     if max_act != -1 and (cur_end - max_act) < GAP:
-                        new_end = min(max_act + GAP + 1, MAX_LIM)
-                        cur_start, cur_end = cur_end, new_end
-                    else: 
-                        break
+                        cur_start, cur_end = cur_end, min(max_act + GAP + 1, MAX_LIM)
+                    else: break
             else:
                 try: idxs = [int(i.strip()) for i in active_indexes.split(",") if i.strip().isdigit() and int(i) < MAX_LIM]
                 except: idxs = []
-                
                 base_pool = list(range(0, 10))
                 max_a = max(idxs, default=0)
                 idxs = list(set(base_pool + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
-                
                 chunk = await scan_chunk(master_pk, idxs, client, rpc_url)
                 records.extend(chunk["records"])
                 global_map.update(chunk["ph_map"])
@@ -104,7 +82,6 @@ async def get_wallet_dashboard(
 
         total_mojo, tx_map, active_bal = 0, {}, {0}
         unspent_coins_list = []
-        
         addr_lookups = {a["puzzle_hash"].replace("0x", ""): a for a in global_addrs}
         
         for r in records:
@@ -113,74 +90,40 @@ async def get_wallet_dashboard(
             if ph_clean not in global_map: continue
             idx = global_map[ph_clean]["index"]
             
+            try:
+                parent_bytes = bytes.fromhex(c["parent_coin_info"].replace("0x", ""))
+                puzzle_bytes = bytes.fromhex(c["puzzle_hash"].replace("0x", ""))
+                chia_coin_obj = Coin(parent_bytes, puzzle_bytes, int(amt))
+                true_coin_id = "0x" + chia_coin_obj.name().hex().lower()
+            except:
+                true_coin_id = "0x"
+
             if not spent:
                 active_bal.add(idx)
                 total_mojo += amt
-                
                 if ph_clean in addr_lookups:
                     addr_lookups[ph_clean]["mojo"] += amt
                     addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
                     addr_lookups[ph_clean]["coins_count"] += 1
-                
-                # 🌟 Нативный расчет криптографического Coin ID через chia_rs
-                try:
-                    parent_bytes = bytes.fromhex(c["parent_coin_info"].replace("0x", ""))
-                    puzzle_bytes = bytes.fromhex(c["puzzle_hash"].replace("0x", ""))
-                    
-                    # Создаем инстанс структуры Coin и забираем ее SHA-256 хеш (.name())
-                    chia_coin_obj = Coin(parent_bytes, puzzle_bytes, int(amt))
-                    generated_coin_id = "0x" + chia_coin_obj.name().hex().lower()
-                except Exception as coin_err:
-                    print(f"⚠️ Ошибка калькуляции Coin ID на бэкенде: {coin_err}")
-                    generated_coin_id = "unknown"
-
                 unspent_coins_list.append({
-                    "coin_id": generated_coin_id,  # 🚀 Пробрасываем готовый ID на верхний уровень
-                    "wallet_index": idx,
-                    "coin": {
-                        "parent_coin_info": c["parent_coin_info"],
-                        "puzzle_hash": c["puzzle_hash"],
-                        "amount": amt
-                    }
+                    "coin_id": true_coin_id, "wallet_index": idx, "coin": {"parent_coin_info": c["parent_coin_info"], "puzzle_hash": c["puzzle_hash"], "amount": amt}
                 })
             
             ts = r.get("timestamp", int(time.time()))
-            
+            # 🚀 tx_id ГАРАНТИРОВАННО ОСТАЕТСЯ ПОЛНЫМ ХЭШЕМ ДЛЯ СВЯЗКИ ТРАНЗАКЦИЙ, добавлено созданное созданной монеты created_coin_id
             tx_map[f"in_{c['parent_coin_info']}_{amt}"] = {
-                "tx_id": c["parent_coin_info"][:16], 
-                "parent_coin_info": c["parent_coin_info"], 
-                "type": "incoming", 
-                "amount": str(amt / 1e12), 
-                "puzzle_hash": f"0x{ph_clean}", 
-                "timestamp": ts
+                "tx_id": c["parent_coin_info"], "parent_coin_info": c["parent_coin_info"], "created_coin_id": true_coin_id, "type": "incoming", "amount": str(amt / 1e12), "puzzle_hash": f"0x{ph_clean}", "timestamp": ts, "status": "confirmed"
             }
             if spent: 
                 tx_map[f"out_{c['parent_coin_info']}_{amt}"] = {
-                    "tx_id": c["parent_coin_info"][:16], 
-                    "parent_coin_info": c["parent_coin_info"], 
-                    "type": "outgoing", 
-                    "amount": str(amt / 1e12), 
-                    "puzzle_hash": f"0x{ph_clean}", 
-                    "timestamp": ts
+                    "tx_id": c["parent_coin_info"], "parent_coin_info": c["parent_coin_info"], "created_coin_id": true_coin_id, "type": "outgoing", "amount": str(amt / 1e12), "puzzle_hash": f"0x{ph_clean}", "timestamp": ts, "status": "confirmed"
                 }
                 
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)
-        
-        sorted_unspent_coins = sorted(
-            unspent_coins_list, 
-            key=lambda x: (x["wallet_index"], -int(x["coin"]["amount"]))
-        )
-        
-        print(f"🏁 [DASHBOARD SUCCESS] Сеть: {network.upper()} | Всего опрошено адресов: {total_scanned} | Живых индексов: {sorted(list(active_bal))}\n")
-        
         return {
             "meta": {"network": network, "mode": mode, "scanned": total_scanned, "active_indexes": sorted(list(active_bal))},
-            "balance": {
-                "total_xch": str(total_mojo / 1e12), 
-                "total_mojo": str(total_mojo), 
-                "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] < 10]
-            },
-            "unspent_coins": sorted_unspent_coins,
+            "balance": {"total_xch": str(total_mojo / 1e12), "total_mojo": str(total_mojo), "addresses": global_addrs if mode == "heavy" else [a for a in global_addrs if a["mojo"] > 0 or a["index"] < 10]},
+            "unspent_coins": sorted(unspent_coins_list, key=lambda x: (x["wallet_index"], -int(x["coin"]["amount"]))),
             "transactions": txs[:50]
         }
     except HTTPException as h: raise h

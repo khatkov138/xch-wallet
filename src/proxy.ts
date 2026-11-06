@@ -5,7 +5,8 @@ import { DEFAULT_LANGUAGE, isSupportedLanguage, WalletLanguage } from '@/config/
 import { getServerSettings } from './lib/utils/server-utils'
 
 export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  // 🌟 Достаем не только pathname, но и search (оригинальную строку GET-параметров ?txId=...)
+  const { pathname, search } = request.nextUrl
 
   // 1. СТРОГИЕ ИСКЛЮЧЕНИЯ ИЗ ИНФРАСТРУКТУРНОГО РОУТИНГА ЛОКАЛИЗАЦИИ
   if (
@@ -36,12 +37,14 @@ export async function proxy(request: NextRequest) {
     
     // Если зашли на чистый корень "/" -> кидаем на /[lang]
     if (pathname === '/') {
-      return NextResponse.redirect(new URL(`/${targetLang}`, request.url))
+      // 🌟 ИСПРАВЛЕНО: Пробрасываем search хвост, если он был на корневом запросе
+      return NextResponse.redirect(new URL(`/${targetLang}${search}`, request.url))
     }
 
-    // 🎯 ДИНАМИЧЕСКИЙ DRY-ОБРАБОТЧИК: Автоматически подставит язык к любому роуту!
-    // Запрос на /nodes/status превратится в /ru/nodes/status или /en/nodes/status
-    return NextResponse.redirect(new URL(`/${targetLang}${pathname}`, request.url))
+    // 🎯 ДИНАМИЧЕСКИЙ DRY-ОБРАБОТЧИК ИСПРАВЛЕН:
+    // Запрос на /explorer/coin/0x...?txId=0x... 
+    // Теперь превратится в /ru/explorer/coin/0x...?txId=0x... БЕЗ ПОТЕРЬ ДАННЫХ!
+    return NextResponse.redirect(new URL(`/${targetLang}${pathname}${search}`, request.url))
   }
 
   return NextResponse.next()
