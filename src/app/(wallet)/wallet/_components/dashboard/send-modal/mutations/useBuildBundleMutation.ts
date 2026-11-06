@@ -1,29 +1,36 @@
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
+import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
 import { selectChiaCoins } from "../ChiaCoinSelection"
-import { useUserSettingsStore } from "@/providers/UserSettnigsProvider";
+import { useSendModalContext } from "../SendModalContext"
 
-
-
-
-export function useBuildBundleMutation(ctx: any, unspentCoins: any[], walletAddresses: any[]) {
-
-  const network = useUserSettingsStore((state) => state.network);
-
+export function useBuildBundleMutation() {
+  const queryClient = useQueryClient()
+  const network = useUserSettingsStore((state) => state.network)
+  const ctx = useSendModalContext()
 
   return useMutation({
+    mutationKey: ["build-bundle"],
     mutationFn: async () => {
-
-
       const { targetAddress, amount, customFeeMojo } = ctx
       if (!targetAddress || !amount) throw new Error("Заполните адрес и сумму")
+
+      // Достаем актуальный кэш дашборда прямо в момент клика из QueryClient
+      const activePk = useWalletSessionStore.getState().unhardenedPkHex
+      const activeIndexes = useWalletSessionStore.getState().activeIndexes
+      const dashboard: any = queryClient.getQueryData(["wallet-dashboard", network, activePk, activeIndexes])
+      
+      const freshUnspentCoins = dashboard?.unspent_coins || []
+      const walletAddresses = dashboard?.balance?.addresses || []
 
       const xch = parseFloat(amount.trim().replace(",", "."))
       if (isNaN(xch) || xch <= 0) throw new Error("Введите корректную сумму")
 
       const totalMojosToSend = Math.round(xch * 1_000_000_000_000)
-      const totalFeeMojos = parseInt(customFeeMojo.trim() || "0", 10)
+      const totalFeeMojos = parseInt(String(customFeeMojo || "").trim() || "0", 10)
 
-      const selectedItems = selectChiaCoins(amount, unspentCoins)
+      // Селекция монет
+      const selectedItems = selectChiaCoins(amount, freshUnspentCoins)
       const accumulatedAmount = selectedItems.reduce((sum: number, item: any) => sum + item.coin.amount, 0)
 
       if (accumulatedAmount < totalMojosToSend) {
@@ -49,18 +56,18 @@ export function useBuildBundleMutation(ctx: any, unspentCoins: any[], walletAddr
       })
 
       const result = await res.json()
-      if (!res.ok || !result.success) throw new Error(result.detail || "Ошибка подготовки")
+      if (!res.ok || !result.success) throw new Error(result.detail || "Ошибка подготовки бандла")
 
-      // Возвращаем данные для сохранения и локальный снапшот для Шага 2
       return { data: result, snapshot: { targetAddress: targetAddress.trim(), mojosToSend: totalMojosToSend } }
     },
-    onSuccess: ({ data, snapshot }, _, __) => {
+    onSuccess: ({ data, snapshot }) => {
+      // Сама мутация обновляет контекст приложения
       ctx.setPreparedSpendData(data)
       ctx.setLocalSnapshot(snapshot)
       ctx.setStep(2)
       ctx.setStatusMessage("")
     },
-    onError: (err: any, _, __) => {
+    onError: (err: any) => {
       ctx.setStatusMessage(`❌ Ошибка подготовки: ${err.message}`)
       ctx.setLocalSnapshot(null)
     }

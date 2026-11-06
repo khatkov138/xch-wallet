@@ -2,7 +2,6 @@
 
 import { useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
-// ИМПОРТЫ: Подключаем новые сторы
 
 import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
 import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
@@ -21,8 +20,11 @@ export function useWalletDashboard() {
   const isReadyToFetch = !isVerifying && !isScreenLocked && !!unhardenedPkHex
   const currentMode = !activeIndexes ? "heavy" : "light"
 
+  // 🎯 КАНОНИЧЕСКИЙ КЛЮЧ КЭША (Экспортируем его для мутации отправки)
+  const queryKey = ["wallet-dashboard", network, unhardenedPkHex, activeIndexes]
+
   const query = useQuery({
-    queryKey: ["wallet-dashboard", network, unhardenedPkHex, activeIndexes],
+    queryKey: queryKey,
     queryFn: async () => {
       const params = new URLSearchParams({
         publicKeyHex: unhardenedPkHex,
@@ -62,6 +64,7 @@ export function useWalletDashboard() {
   const unspentCoins = query.data?.unspent_coins ?? [] 
 
   return {
+    queryKey, // 🌟 Пробрасываем ключ наружу для точечных инвалидаций в мутациях
     realXCHStr,
     numericXCH,
     addresses,       

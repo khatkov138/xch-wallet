@@ -1,187 +1,119 @@
-'use client'
-
 import React, { Suspense } from "react"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
-import { useQuery } from "@tanstack/react-query"
-import { ChevronLeft, Clock, ShieldCheck } from "lucide-react"
-import { Card, CardContent } from "@/components/ui/card"
-import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
+import { CoinExplorerClient } from "./CoinExplorerClient"
+import { Layers, Cpu, HardDrive, ChevronRight } from "lucide-react"
+import { cookies } from "next/headers"
 
-const formatMojoToXch = (mojo: any): string => {
-  if (!mojo) return "0"
-  const xch = Number(mojo) / 1000000000000
-  return xch.toFixed(12).replace(/\.?0+$/, "")
+interface PageProps {
+  params: Promise<{ lang: string; network: string; coinId: string }>
+  searchParams: Promise<{ txId?: string }>
 }
 
-const formatDate = (ts: number) => ts ? new Date(ts * 1000).toLocaleString("ru-RU") : "—"
+export const instant = false 
 
-function CoinExplorerContent() {
-  const params = useParams()
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  
-  const network = (params?.network as string) || "mainnet"
-  const coinId = (params?.coinId as string) || ""
-  const txIdParam = searchParams.get("txId") || ""
-  const finalTxId = txIdParam || coinId
+export default async function CoinExplorerPage({ params, searchParams }: PageProps) {
+  const cookieStore = await cookies()
+  const allCookies = cookieStore.toString()
 
-  const { data: txData, isLoading, isError } = useQuery({
-    queryKey: ["explorer-coin", coinId, finalTxId, network],
-    queryFn: async () => {
-      if (!coinId) return null
-      const res = await fetch(`/api/v1/transactions/track-tx?txId=${finalTxId}&targetCoinId=${coinId}`)
-      if (!res.ok) throw new Error("Tracker RPC Error")
-      return res.json()
-    },
-    enabled: !!coinId,
-    refetchInterval: (query) => query.state.data?.status === "CONFIRMED" ? false : 6000,
-    staleTime: 0,
-  })
-
-  const blockchainStatus = txData?.status || "NOT_FOUND"
-  const isConfirmed = blockchainStatus === "CONFIRMED"
-
-  const computedToAddress = usePuzzleHashToAddress(txData?.puzzle_hash)
-  const computedFromAddress = usePuzzleHashToAddress(txData?.parent_puzzle_hash)
-  const displayTxId = txData?.tx_id && txData.tx_id !== coinId && txData.tx_id !== `0x${coinId}`
-
-  const handleAddressClick = (address: string) => {
-    if (!address || address.includes("Reward") || address.includes("Ожидание")) return
-    router.push(`/explorer/${network}/address/${address}`)
-  }
+  const dataPromise = (async () => {
+    try {
+      const { network, coinId } = await params
+      const { txId } = await searchParams
+      
+      const rawTxId = txId || coinId
+      const safeCoinId = coinId.startsWith("0x") ? coinId : `0x${coinId}`
+      const safeTxId = rawTxId.startsWith("0x") ? rawTxId : `0x${rawTxId}`
+      const safeNetwork = network || "mainnet"
+      
+      const backendUrl = "http://localhost:3000"
+      
+      const res = await fetch(
+        `${backendUrl}/api/v1/transactions/track-tx?txId=${safeTxId}&targetCoinId=${safeCoinId}&network=${safeNetwork}`,
+      )
+      if (!res.ok) {
+        console.error(`🔴 Server Fetch Failed with status: ${res.status}`)
+        return null
+      }
+      return await res.json()
+    } catch (err) {
+      console.error("🔴 API Proxy Connection Refused on 3000:", err)
+      return null
+    }
+  })()
 
   return (
-    <div className="space-y-5">
-      <button 
-        onClick={() => router.push("/")}
-        className="flex items-center gap-1.5 text-zinc-400 hover:text-white text-xs font-semibold bg-zinc-900/40 hover:bg-zinc-900 border border-zinc-900 px-3 py-1.5 rounded-xl transition-all cursor-pointer"
-      >
-        <ChevronLeft size={14} />
-        <span>Вернуться в кошелек</span>
-      </button>
+    <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start py-6 flex-1 text-white">
+      
+      {/* ЛЕВАЯ ЧАСТЬ (7 КОЛОНОК) */}
+      <div className="lg:col-span-7 space-y-6 w-full">
+        
+        {/* Хлебные крошки */}
+        <div className="space-y-1.5 text-left">
+          <nav className="flex items-center gap-1.5 text-[10px] font-bold tracking-wider text-zinc-500 uppercase select-none">
+            <span className="text-zinc-500">explorer</span>
+            <ChevronRight size={10} className="text-zinc-600 shrink-0" />
+            <span className="text-zinc-500">network</span>
+            <ChevronRight size={10} className="text-zinc-600 shrink-0" />
+            <span className="text-zinc-400">coin</span>
+          </nav>
 
-      <div className="space-y-1">
-        <span className="text-[10px] font-bold text-[#FF2E93] uppercase tracking-widest bg-[#FF2E93]/10 px-2 py-0.5 rounded-md border border-[#FF2E93]/20">
-          Chia Coin Explorer ({network.toUpperCase()})
-        </span>
-        <h1 className="text-xl font-black text-white tracking-tight break-all pt-1">
-          Coin Overview
-        </h1>
+          <h1 className="text-2xl font-black tracking-tight text-white pt-0.5">
+            Coin Transaction Overview
+          </h1>
+        </div>
+
+        {/* МИНИМАЛИСТИЧНЫЙ СКЕЛЕТОН НА ЧИСТОМ TAILWIND */}
+        <Suspense fallback={
+          <div className="w-full space-y-4 animate-pulse">
+            <div className="h-16 w-full bg-zinc-900 border border-zinc-850 rounded-[24px]" />
+            <div className="bg-[#0c0c0e] border border-zinc-900 rounded-[24px] p-5 space-y-4 min-h-[300px]">
+              <div className="h-10 bg-zinc-900/60 rounded-xl w-full" />
+              <div className="h-10 bg-zinc-900/60 rounded-xl w-full" />
+              <div className="h-12 bg-zinc-900/40 rounded-xl w-full mt-4" />
+            </div>
+          </div>
+        }>
+          <CoinExplorerClient 
+            dataPromise={dataPromise}
+            paramsPromise={params}
+          />
+        </Suspense>
       </div>
 
-      {isLoading ? (
-        <div className="p-8 text-center text-xs font-medium text-zinc-500 uppercase tracking-wider animate-pulse">
-          Загрузка спецификации монеты...
+      {/* ПРАВАЯ ЧАСТЬ (5 КОЛОНОК) — БЕЗЛИЧНЫЙ ТЕХНИЧЕСКИЙ АНАЛИЗ С УЧЕТОМ РЕОРГОВ */}
+      <div className="lg:col-span-5 space-y-4 w-full h-full lg:pt-16">
+        
+        {/* Карточка 1 */}
+        <div className="bg-[#0c0c0e]/60 border border-zinc-900 p-4.5 rounded-[20px] space-y-2 text-left">
+          <h4 className="text-xs font-black text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+            <Cpu size={14} className="text-[#FF2E93]" /> Что такое Coin ID?
+          </h4>
+          <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">
+            Каждая монета в сети Chia — это уникальный смарт-контракт. Её ID (имя) создаётся автоматически на основе трёх параметров: ID родительской монеты, Puzzle Hash (хэша скрипта) и отправленной суммы.
+          </p>
         </div>
-      ) : isError || txData?.success === false ? (
-        <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] p-6 text-center">
-          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Монета не найдена</p>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          
-          <Card className="bg-zinc-900/20 border border-zinc-900/50 rounded-[24px] overflow-hidden">
-            <CardContent className="p-5 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl border shrink-0 ${
-                  isConfirmed ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                }`}>
-                  {isConfirmed ? <ShieldCheck size={20} /> : <Clock size={20} className="animate-spin" style={{ animationDuration: '4s' }} />}
-                </div>
-                <div>
-                  <h3 className="text-xs font-bold text-white">
-                    {isConfirmed ? "Статус: Подтверждена (Coin Created)" : "Статус: В Мемпуле"}
-                  </h3>
-                  <p className="text-[11px] text-zinc-400 leading-normal">
-                    {isConfirmed ? "Запись успешно внесена в глобальный стейт Chia" : "Транзакция ожидает включения в блок"}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
-          <div className="bg-zinc-900/10 border border-zinc-900/50 rounded-[24px] p-5 space-y-3.5 text-[11px]">
-            
-            {displayTxId && (
-              <div className="flex justify-between items-center py-2 border-b border-zinc-900/60">
-                <span className="text-zinc-500 font-semibold">Transaction ID:</span>
-                <span className="font-mono text-zinc-300 break-all max-w-[240px] text-right select-all">{txData.tx_id}</span>
-              </div>
-            )}
-
-            <div className="flex justify-between items-center py-2 border-b border-zinc-900/60">
-              <span className="text-zinc-500 font-semibold">Coin ID (Name):</span>
-              <span className="font-mono text-[#FF2E93] break-all max-w-[240px] text-right select-all">{coinId}</span>
-            </div>
-
-            <div className="flex justify-between items-center py-2 border-b border-zinc-900/60">
-              <span className="text-zinc-500 font-semibold">Amount:</span>
-              <span className="font-black text-white text-right text-xs">
-                {isConfirmed ? `${formatMojoToXch(txData.amount_mojo)} XCH` : "Расчет суммы..."}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-start py-2 border-b border-zinc-900/60 gap-4">
-              <span className="text-zinc-500 font-semibold">From (Sender Address):</span>
-              <div className="text-right max-w-[240px]">
-                {isConfirmed ? (
-                  computedFromAddress ? (
-                    <button
-                      onClick={() => handleAddressClick(computedFromAddress)}
-                      className="font-mono text-zinc-300 break-all text-right hover:text-[#FF2E93] transition-colors select-none cursor-pointer block w-full text-right"
-                    >
-                      {computedFromAddress}
-                    </button>
-                  ) : (
-                    <span className="font-mono text-zinc-500 italic select-none">Pool / Remint Reward</span>
-                  )
-                ) : (
-                  <span className="font-mono text-zinc-500 select-none block">Ожидание блока...</span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-between items-start py-2 border-b border-zinc-900/60 gap-4">
-              <span className="text-zinc-500 font-semibold">To (Recipient Address):</span>
-              <div className="text-right max-w-[240px]">
-                {isConfirmed && computedToAddress ? (
-                  <button
-                    onClick={() => handleAddressClick(computedToAddress)}
-                    className="font-mono text-emerald-400 break-all text-right hover:text-[#FF2E93] transition-colors select-none cursor-pointer block w-full text-right"
-                  >
-                    {computedToAddress}
-                  </button>
-                ) : (
-                  <span className="font-mono text-zinc-500 select-none block">Определяется...</span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex justify-between items-center py-2 border-b border-zinc-900/60">
-              <span className="text-zinc-500 font-semibold">Time (UTC):</span>
-              <span className="text-zinc-300 font-medium text-right">
-                {isConfirmed ? formatDate(txData.timestamp) : "В процессе..."}
-              </span>
-            </div>
-
-            <div className="flex justify-between items-center py-2">
-              <span className="text-zinc-500 font-semibold">Confirmed Block:</span>
-              <span className="font-mono font-bold text-zinc-300 text-right">
-                {isConfirmed ? `#${txData.block_height}` : "—"}
-              </span>
-            </div>
-
-          </div>
+        {/* Карточка 2 — ЖЕСТКИЙ ФИКС С УЧЕТОМ БЛОКЧЕЙН РЕОРГАНИЗАЦИЙ */}
+        <div className="bg-[#0c0c0e]/60 border border-zinc-900 p-4.5 rounded-[20px] space-y-2 text-left">
+          <h4 className="text-xs font-black text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+            <Layers size={14} className="text-blue-400" /> Очередь и валидация мемпула
+          </h4>
+          <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">
+            Статус <span className="text-blue-400 font-bold font-mono">IN_MEMPOOL</span> означает, что транзакция ожидает включения в блок. При смене статуса на <span className="text-emerald-400 font-bold font-mono">CONFIRMED</span> запись вносится в текущую цепь. Обратите внимание: на стыке блоков при реорганизации блокчейна (Reorg) свежие транзакции могут временно возвращаться из блоков обратно в мемпул до стабилизации высоты цепи.
+          </p>
         </div>
-      )}
+
+        {/* Карточка 3 */}
+        <div className="bg-[#0c0c0e]/60 border border-zinc-900 p-4.5 rounded-[20px] space-y-2 text-left">
+          <h4 className="text-xs font-black text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+            <HardDrive size={14} className="text-zinc-500" /> Публичный аудит
+          </h4>
+          <p className="text-[11px] text-zinc-400 leading-relaxed font-medium">
+            Данные запрашиваются напрямую у нод блокчейна Chia. Информация является полностью открытой. Эту страницу можно отправить получателю перевода для независимой проверки статуса транзакции.
+          </p>
+        </div>
+
+      </div>
+      
     </div>
-  )
-}
-
-export default function CoinExplorerPage() {
-  return (
-    <Suspense fallback={<div className="p-8 text-center text-xs font-medium text-zinc-500 animate-pulse">Загрузка эксплорера...</div>}>
-      <CoinExplorerContent />
-    </Suspense>
   )
 }

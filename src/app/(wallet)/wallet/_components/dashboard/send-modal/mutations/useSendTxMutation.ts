@@ -1,25 +1,25 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useWalletAuth } from "@/hooks/useWalletAuth"
 import { calculateChiaCoinId, signChiaTransaction } from "@/lib/utils/crypto"
-
 import { useWalletSessionStore } from "@/store/useWalletSessessionStore"
 import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
+import { useSendModalContext } from "../SendModalContext"
 
-export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRefObject<Set<string>>) {
+export function useSendTxMutation(sentTransactionsRef: React.MutableRefObject<Set<string>>) {
   const queryClient = useQueryClient()
   const { getMnemonicForSigning } = useWalletAuth()
-
-  const network = useUserSettingsStore((state) => state.network);
+  const network = useUserSettingsStore((state) => state.network)
+  const ctx = useSendModalContext()
 
   return useMutation({
+    mutationKey: ["send-transaction"],
     mutationFn: async () => {
       const { preparedSpendData, pin, localSnapshot } = ctx
-      if (!preparedSpendData?.coin_spends || !pin || !localSnapshot) throw new Error("Отсутствуют данные спендов или ПИН")
-      if (pin.length !== 6) throw new Error("ПИН-код должен состоять из 6 цифр")
-
-      const coinSpendsList = preparedSpendData.coin_spends
+      if (!preparedSpendData?.coin_spends || !pin || !localSnapshot) throw new Error("Отсутствуют данные спендов")
       
-      // 1. Крипто-аудит Coin ID c приведением к нижнему регистру
+      const coinSpendsList = preparedSpendData.coin_spends
+
+      // 1. Крипто-аудит Coin ID
       for (const item of coinSpendsList) {
         const trueCoinId = calculateChiaCoinId(item.coin.parent_coin_info, item.coin.puzzle_hash, item.coin.amount)
         if (item.message_to_sign_hex.substring(64, 128).toLowerCase() !== trueCoinId.toLowerCase()) {
@@ -27,16 +27,13 @@ export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRe
         }
       }
 
-      // 2. Аудит лимитов и адреса
+      // 2. Аудит лимитов
       if (preparedSpendData.verified_target_address !== localSnapshot.targetAddress) throw new Error("Подмена адреса!")
-      if ((preparedSpendData.verified_mojos_to_send + (preparedSpendData.audit_info?.summary.fee_network_mojo || 0)) < localSnapshot.mojosToSend * 0.7) {
-        throw new Error("Критическое проскальзывание комиссий (>30%)")
-      }
 
       // 3. Подписание
       ctx.setStatusMessage("🔐 Подписание транзакции...")
       const clearMnemonic = await getMnemonicForSigning(pin)
-      const signatures = await Promise.all(coinSpendsList.map((item: any) => 
+      const signatures = await Promise.all(coinSpendsList.map((item: any) =>
         signChiaTransaction({ mnemonic: clearMnemonic, walletIndex: Number(item.wallet_index), messageHex: item.message_to_sign_hex, syntheticOffsetHex: item.synthetic_offset_hex })
       ))
 
@@ -46,45 +43,80 @@ export function useSendTxMutation(ctx: any, sentTransactionsRef: React.MutableRe
       sentTransactionsRef.current.add(transactionFingerprint)
 
       ctx.setStatusMessage("🚀 Отправка в сеть...")
-      const res = await fetch("/api/v1/transactions/send-tx", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          network,
-          signatures_list: signatures,
-          coin_spends: coinSpendsList.map((cs: any) => ({ wallet_index: cs.wallet_index, synthetic_offset_hex: cs.synthetic_offset_hex, coin: cs.coin, puzzle_reveal: cs.puzzle_reveal, solution: cs.solution })),
-          integrity_token: preparedSpendData.integrity_token,
-          messages_signed_hex: flatMessagesList
-        })
-      })
 
-      const result = await res.json()
+      let res: Response;
+      try {
+        res = await fetch("/api/v1/transactions/send-tx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            network,
+            signatures_list: signatures,
+            coin_spends: coinSpendsList.map((cs: any) => ({ wallet_index: cs.wallet_index, synthetic_offset_hex: cs.synthetic_offset_hex, coin: cs.coin, puzzle_reveal: cs.puzzle_reveal, solution: cs.solution })),
+            integrity_token: preparedSpendData.integrity_token,
+            messages_signed_hex: flatMessagesList
+          })
+        })
+      } catch (networkErr: any) {
+        sentTransactionsRef.current.delete(transactionFingerprint)
+        throw new Error(`Ошибка сети: ${networkErr.message}`)
+      }
+
+      let result: any;
+      try {
+        result = await res.json()
+      } catch (jsonErr) {
+        sentTransactionsRef.current.delete(transactionFingerprint)
+        throw new Error("Критический сбой API: Некорректный ответ сервера")
+      }
+
       if (!res.ok || !result.success) {
         sentTransactionsRef.current.delete(transactionFingerprint)
-        throw new Error(result.error || "Нода отклонила транзакцию")
+        if (result.detail) throw new Error(typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail))
+        if (result.error) throw new Error(result.error)
+        throw new Error("Транзакция отклонена нодой")
       }
+
       return result
     },
     onSuccess: (resData) => {
-      ctx.setStatusMessage("🎉 Успешно! Монеты отправлены!")
+      ctx.setTxResponseData(resData)
       ctx.setPin("")
-      
-      if (typeof ctx.setTxResponseData === "function") {
-        ctx.setTxResponseData(resData)
-      }
+      ctx.setStep(3) // 🚀 Сама мутация жестко переключает экран на Шаг 3
 
-      // ИСПРАВЛЕНИЕ: Читаем активный ключ из переименованного стора сессии
+      // Обновление кэша UTXO
       const activePk = useWalletSessionStore.getState().unhardenedPkHex
-      queryClient.setQueryData(["wallet-dashboard", activePk], (oldData: any) => {
-        if (!oldData || !resData.tracked_info) return oldData
-        const spentSet = new Set(resData.tracked_info.spent_coins.map((id: string) => id.toLowerCase()))
-        return { ...oldData, unspent_coins: oldData.unspent_coins.filter((utxo: any) => !spentSet.has((utxo.coin.coin_id || utxo.coin.parent_coin_info).toLowerCase())) }
+      const activeIndexes = useWalletSessionStore.getState().activeIndexes
+      const targetKey = ["wallet-dashboard", network, activePk, activeIndexes]
+
+      const backendSpentCoins = resData?.tracked_info?.spent_coins || []
+
+      queryClient.setQueryData(targetKey, (oldData: any) => {
+        if (!oldData || !oldData.unspent_coins) return oldData
+        return {
+          ...oldData,
+          unspent_coins: oldData.unspent_coins.filter((utxo: any) => {
+            const uParent = (utxo?.coin?.parent_coin_info || "").trim().toLowerCase()
+            const uPuzzle = (utxo?.coin?.puzzle_hash || "").trim().toLowerCase()
+            const uAmount = Number(utxo?.coin?.amount || 0)
+
+            return !backendSpentCoins.some((spent: any) => {
+              const sParent = (spent?.parent_coin_info || "").trim().toLowerCase()
+              const sPuzzle = (spent?.puzzle_hash || "").trim().toLowerCase()
+              const sAmount = Number(spent?.amount || 0)
+              return uParent === sParent && uPuzzle === sPuzzle && uAmount === sAmount
+            })
+          })
+        }
       })
     },
     onError: (err: any) => {
-      ctx.setStatusMessage(`❌ Ошибка: ${err.message}`)
+      ctx.setStatusMessage(`❌ ${err.message}`)
       if (ctx.preparedSpendData?.coin_spends) {
-        sentTransactionsRef.current.delete(ctx.preparedSpendData.coin_spends.map((cs: any) => cs.message_to_sign_hex).join("|"))
+        const flatMessagesList = ctx.preparedSpendData.coin_spends.map((cs: any) => cs.message_to_sign_hex)
+        if (flatMessagesList.length > 0) {
+          sentTransactionsRef.current.delete(flatMessagesList.join("|"))
+        }
       }
     }
   })

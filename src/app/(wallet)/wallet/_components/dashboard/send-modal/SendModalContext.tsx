@@ -1,16 +1,13 @@
 'use client'
 
-import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from "react"
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
 import { useWalletFees } from "@/hooks/useWalletFees"
-import { useBuildBundleMutation } from "./mutations/useBuildBundleMutation"
-import { useSendTxMutation } from "./mutations/useSendTxMutation"
 import { selectChiaCoins } from "./ChiaCoinSelection"
 import { formatMojoToXchString } from "@/lib/utils"
 
 type FeeTier = "low" | "medium" | "high"
 
-// 🎯 Строгий интерфейс для контекста, чтобы убрать все ошибки TypeScript
 interface SendModalContextType {
   targetAddress: string
   setTargetAddress: React.Dispatch<React.SetStateAction<string>>
@@ -20,6 +17,8 @@ interface SendModalContextType {
   setCustomFeeMojo: React.Dispatch<React.SetStateAction<string>>
   pin: string
   setPin: React.Dispatch<React.SetStateAction<string>>
+  selectedTier: FeeTier
+  setSelectedTier: React.Dispatch<React.SetStateAction<FeeTier>>
   step: 1 | 2 | 3
   setStep: React.Dispatch<React.SetStateAction<1 | 2 | 3>>
   statusMessage: string
@@ -28,19 +27,15 @@ interface SendModalContextType {
   setPreparedSpendData: React.Dispatch<React.SetStateAction<any>>
   localSnapshot: any
   setLocalSnapshot: React.Dispatch<React.SetStateAction<any>>
+  txResponseData: any
   setTxResponseData: React.Dispatch<React.SetStateAction<any>>
-  setSelectedTier: React.Dispatch<React.SetStateAction<FeeTier>>
-  selectedTier: FeeTier
-  handleSubmit: (e: React.FormEvent) => void
   realXCHStr: string
   dynamicFees: any
   getFeeInXchString: () => string
   getTotalOutflowString: () => string
   handleSetMax: () => void
-  txResponseData: any
-  loading: boolean
-  txStatus: "IDLE" | "PENDING" | "SUCCESS" | "ERROR"
-  txId: string | null
+  resetAll: () => void
+  onCloseForm: () => void // Изолированный метод закрытия без пропсов
 }
 
 const SendModalContext = createContext<SendModalContextType | undefined>(undefined)
@@ -58,71 +53,54 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
   const [localSnapshot, setLocalSnapshot] = useState<any>(null)
   const [txResponseData, setTxResponseData] = useState<any>(null)
 
-  const sentTransactionsRef = useRef<Set<string>>(new Set())
-  const { unspentCoins, addresses, realXCHStr } = useWalletDashboard()
+  const { unspentCoins, realXCHStr } = useWalletDashboard()
 
   const estimatedSpendsCount = useMemo(() => {
+    if (!amount) return 1
     const selectedCoins = selectChiaCoins(amount, unspentCoins)
     return Math.max(1, selectedCoins.length)
   }, [amount, unspentCoins])
 
   const { data: dynamicFees } = useWalletFees(isOpen, estimatedSpendsCount)
 
-  const self = {
-    targetAddress, 
-    setTargetAddress, 
-    amount, 
-    setAmount,       
-    customFeeMojo, 
-    setCustomFeeMojo,
-    pin, 
-    setPin, 
-    step, 
-    setStep, 
-    statusMessage, 
-    setStatusMessage, 
-    preparedSpendData, 
-    setPreparedSpendData, 
-    localSnapshot, 
-    setLocalSnapshot,
-    setTxResponseData 
-  }
+  // Атомарный сброс всех стейтов
+  const resetAll = useCallback(() => {
+    setTargetAddress("")
+    setAmount("")
+    setSelectedTier("medium")
+    setCustomFeeMojo("0")
+    setPin("")
+    setStep(1)
+    setStatusMessage("")
+    setPreparedSpendData(null)
+    setLocalSnapshot(null)
+    setTxResponseData(null)
+  }, [])
 
-  const buildBundleMutation = useBuildBundleMutation(self, unspentCoins, addresses)
-  const sendTxMutation = useSendTxMutation(self, sentTransactionsRef)
+  // Централизованная функция: сброс + закрытие
+  const handleCloseAndReset = useCallback(() => {
+    resetAll()
+    onClose()
+  }, [onClose, resetAll])
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (buildBundleMutation.isPending || sendTxMutation.isPending) return
-    if (step === 1) buildBundleMutation.mutate()
-    else sendTxMutation.mutate()
-  }
+  // Автосброс стейтов, если модалка закрывается извне (например, по клику на бэкдроп)
+  useEffect(() => { 
+    if (!isOpen) resetAll() 
+  }, [isOpen, resetAll])
 
-  const resetAll = () => {
-    setTargetAddress(""); setAmount(""); setSelectedTier("medium"); setCustomFeeMojo("0"); setPin("")
-    setStep(1); setStatusMessage(""); setPreparedSpendData(null); setLocalSnapshot(null); setTxResponseData(null)
-    buildBundleMutation.reset(); sendTxMutation.reset(); sentTransactionsRef.current.clear()
-  }
-
-  useEffect(() => { if (!isOpen) resetAll() }, [isOpen])
-
-   useEffect(() => {
-    // Явно приводим к Record<FeeTier, any>, чтобы TS разрешил динамический индекс
-    const fees = dynamicFees as Record<FeeTier, any> | undefined;
-    
+  // Автоподстановка котировок комиссии ноды
+  useEffect(() => {
+    const fees = dynamicFees as Record<FeeTier, any> | undefined
     if (fees && fees[selectedTier]) {
       setCustomFeeMojo(String(fees[selectedTier].mojo))
     }
   }, [selectedTier, dynamicFees])
 
-
   const getFeeInXchString = () => {
     try {
       const mojoBI = BigInt(customFeeMojo.trim())
       return mojoBI === 0n ? "0 XCH" : formatMojoToXchString(mojoBI)
-    } catch {
-      return "0 XCH"
-    }
+    } catch { return "0 XCH" }
   }
   
   const getTotalOutflowString = () => {
@@ -131,28 +109,16 @@ export function SendModalProvider({ isOpen, onClose, children }: { isOpen: boole
   }
 
   const handleSetMax = () => {
-    if (realXCHStr && realXCHStr !== "0.0000") {
-      setAmount(realXCHStr)
-    }
+    if (realXCHStr && realXCHStr !== "0.0000") setAmount(realXCHStr)
   }
-
-  const txStatusMap = { idle: "IDLE", pending: "PENDING", success: "SUCCESS", error: "ERROR" } as const
 
   return (
     <SendModalContext.Provider value={{
-      ...self, 
-      setSelectedTier, 
-      selectedTier, 
-      handleSubmit, 
-      realXCHStr: realXCHStr || "0.0000", // Защита от undefined
-      dynamicFees,
-      getFeeInXchString,      
-      getTotalOutflowString,   
-      handleSetMax,           
-      txResponseData, 
-      loading: buildBundleMutation.isPending || sendTxMutation.isPending,
-      txStatus: txStatusMap[sendTxMutation.status],
-      txId: sendTxMutation.data?.tx_id ?? null
+      targetAddress, setTargetAddress, amount, setAmount, customFeeMojo, setCustomFeeMojo, pin, setPin,
+      selectedTier, setSelectedTier, step, setStep, statusMessage, setStatusMessage,
+      preparedSpendData, setPreparedSpendData, localSnapshot, setLocalSnapshot, txResponseData, setTxResponseData,
+      realXCHStr: realXCHStr || "0.0000", dynamicFees, getFeeInXchString, getTotalOutflowString, handleSetMax, resetAll,
+      onCloseForm: handleCloseAndReset
     }}>
       {children}
     </SendModalContext.Provider>

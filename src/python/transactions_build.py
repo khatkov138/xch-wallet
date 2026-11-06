@@ -38,17 +38,16 @@ class BuildSpendBundleRequest(BaseModel):
     inputs: list[dict] = Field(..., description="Массив объектов {coin_pk_hex, coin_to_spend, wallet_index}")
     send_to_address: str = Field(..., description="Адрес получателя Chia (xch... / txch...)")
     mojos_to_send: int = Field(..., description="Сумма отправки в mojo")
-    fee_mojos: int = Field(0, description="Комиссия сети в mojo")
+    fee_mojos: int = Field(0, description="Комиссия сети in mojo")
 
 @tx_router.post("/build-spend-bundle")
 async def build_spend_bundle(payload: BuildSpendBundleRequest):
 
     network = payload.network
-    inputs = payload.inputs  # 🌟 Теперь 'inputs' определен!
+    inputs = payload.inputs  
     send_to_address = payload.send_to_address
     mojos_to_send = payload.mojos_to_send
     fee_mojos = payload.fee_mojos
-
 
     try:
         if not inputs:
@@ -61,7 +60,7 @@ async def build_spend_bundle(payload: BuildSpendBundleRequest):
         async with httpx.AsyncClient(verify=False, cert=(cert, key)) as c:
             await check_node_synced_internal(c, rpc_url)
         
-        # Получаем генезис-хэш конкретной сети (модуль transport сам заберет SSL по имени сети)
+        # Получаем генезис-хэш конкретной сети
         genesis = fetch_genesis(network)
         total_input_amount = 0
         parsed_coins = []
@@ -88,18 +87,19 @@ async def build_spend_bundle(payload: BuildSpendBundleRequest):
                 "wallet_index": int(item["wallet_index"])
             })
 
-        PROJECT_DUST_ADDRESS = os.environ.get(
-            "PROJECT_DUST_ADDRESS", 
-            "txch12dza3pwr4gzyfxgvl04tlu67nlhw5yv86sx3snkqr0tck2ss4uns4fqh9w"
+        # 🎯 Считываем новые переменные из твоего ENV
+        PROJECT_FEED_ADDRESS = os.environ.get(
+            "PROJECT_FEED_ADDRESS", 
+            "txch1zlxscepjrdsf37tzwmnrt3asejxq3hsh44cvpq00n5s6nesl7jlqw5lftl"
         )
-        DUST_FEE_MOJOS = int(os.environ.get("DUST_FEE_MOJOS", 100_000_000))
+        BUILDER_FEE_MOJOS = int(os.environ.get("BUILDER_FEE_MOJOS", 10_000_000_000))
 
         # 🎯 ЖЕСТКИЙ ФИКС МАТЕМАТИКИ (Strict Send Max): Комиссии сети и билдера вычитаются из суммы
-        mojos_to_send = mojos_to_send - fee_mojos - DUST_FEE_MOJOS
+        mojos_to_send = mojos_to_send - fee_mojos - BUILDER_FEE_MOJOS
         if mojos_to_send <= 0:
             raise HTTPException(status_code=400, detail="Сумма перевода слишком мала для покрытия комиссий!")
         
-        required = mojos_to_send + fee_mojos + DUST_FEE_MOJOS
+        required = mojos_to_send + fee_mojos + BUILDER_FEE_MOJOS
 
         if total_input_amount < required:
             raise HTTPException(status_code=400, detail="Недостаточно выбранных монет на балансе!")
@@ -111,10 +111,10 @@ async def build_spend_bundle(payload: BuildSpendBundleRequest):
         lead_conds = [make_create_coin_condition(decode_puzzle_hash(send_to_address), mojos_to_send, [])]
         
         change_amount = total_input_amount - required
-        fee_collected = DUST_FEE_MOJOS
+        fee_collected = BUILDER_FEE_MOJOS
 
         # 2. 🔌 ЖЕЛЕЗНАЯ ПРИСОСКА КОМИССИИ КОШЕЛЬКА
-        lead_conds.append(make_create_coin_condition(decode_puzzle_hash(PROJECT_DUST_ADDRESS), DUST_FEE_MOJOS, []))
+        lead_conds.append(make_create_coin_condition(decode_puzzle_hash(PROJECT_FEED_ADDRESS), BUILDER_FEE_MOJOS, []))
 
         # 3. Возврат остатка сдачи пользователю на ведущий адрес
         if change_amount > 0:
@@ -150,7 +150,7 @@ async def build_spend_bundle(payload: BuildSpendBundleRequest):
             
             offset_int = calculate_synthetic_offset(
                 G1Element.from_bytes(bytes.fromhex(item["coin_pk_hex"].replace("0x", ""))), 
-                DEFAULT_HIDDEN_PUZZLE_HASH
+                DEFAULT_HIDZEN_PUZZLE_HASH if "DEFAULT_HIDZEN_PUZZLE_HASH" in globals() else DEFAULT_HIDDEN_PUZZLE_HASH
             )
             synthetic_offset_hex = offset_int.to_bytes(32, byteorder="big").hex()
 
@@ -189,7 +189,7 @@ async def build_spend_bundle(payload: BuildSpendBundleRequest):
                     "amount_mojo": change_amount
                 },
                 "dust_fee": {
-                    "puzzle_hash": "0x" + decode_puzzle_hash(PROJECT_DUST_ADDRESS).hex(),
+                    "puzzle_hash": "0x" + decode_puzzle_hash(PROJECT_FEED_ADDRESS).hex(),
                     "amount_mojo": fee_collected
                 }
             }
