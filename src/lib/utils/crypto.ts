@@ -49,9 +49,14 @@ function hexToBytes(hex: string): Uint8Array {
     return bytes;
 }
 
-export function puzzleHashToAddress(puzzleHash: string, prefix: string): string {
-    if (!puzzleHash || !prefix) return ""
+export function puzzleHashToAddress(puzzleHash: string | undefined | null, network: string | undefined | null): string {
+    // 🎯 Если хэш или сеть не переданы, сразу возвращаем пустую строку без ошибок
+    if (!puzzleHash || !network) return ""
+    
     try {
+        // 🎯 Сама определяет префикс на основе переданной строки сети
+        const prefix = network.toLowerCase().includes("testnet") ? "txch" : "xch"
+        
         const cleanHash = puzzleHash.startsWith("0x") ? puzzleHash.slice(2) : puzzleHash
         const bytes = hexToBytes(cleanHash)
         const words = bech32m.toWords(bytes)
@@ -61,6 +66,7 @@ export function puzzleHashToAddress(puzzleHash: string, prefix: string): string 
         return ""
     }
 }
+
 
 /**
  * Шифрует мнемонику с помощью PBKDF2 + AES-GCM 256

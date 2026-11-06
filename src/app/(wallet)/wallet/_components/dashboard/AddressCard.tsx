@@ -3,12 +3,13 @@
 import React, { useState, useMemo } from "react"
 import { Copy, Check, Loader2, AlertTriangle } from "lucide-react"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
-import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
 import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
+import { puzzleHashToAddress } from "@/lib/utils/crypto" // 🚀 Импортируем твою чистую функцию
 
 export function AddressCard() {
   const [copied, setCopied] = useState(false)
 
+  // Получаем текущую сеть из Zustand
   const network = useUserSettingsStore((state) => state.network)
   const isMainnet = network === 'mainnet'
 
@@ -18,7 +19,8 @@ export function AddressCard() {
     ? (addresses.find((a: any) => a.index === 0) || addresses[0])
     : null
 
-  const address0 = usePuzzleHashToAddress(targetObj?.puzzle_hash)
+  // 🚀 ВМЕСТО СТАРОГО ХУКА: Вызываем обычную функцию, передавая хэш и сеть
+  const address0 = puzzleHashToAddress(targetObj?.puzzle_hash, network)
   const isLoaded = !isDashboardLoading && address0 !== ""
 
   // Разбиваем адрес на три части для визуального акцента на краях

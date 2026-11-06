@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from "react"
 import Link from "next/link"
 import { LogOut, ChevronDown, Check } from "lucide-react"
-import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { useNodesStatus } from "@/hooks/useNodesStatus"
 import { useQuery } from "@tanstack/react-query"
 import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
@@ -28,32 +28,51 @@ export const WalletHeader = React.memo(function WalletHeader({ showLogout, onLog
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
 
-  // ⚡ АТОМАРНЫЕ ПРИМИТИВЫ: Извлекаем поля строго по отдельности, чтобы React 19 не ругался на getServerSnapshot
+  // ⚡ АТОМАРНЫЕ ПРИМИТИВЫ ДЛЯ ZUSTAND
   const network = useUserSettingsStore((state) => state.network)
   const currency = useUserSettingsStore((state) => state.currency)
   const language = useUserSettingsStore((state) => state.language)
-  const isAuth = useUserSettingsStore((state) => state.isAuth) // 🔐 Наш легкий маркер авторизации для скрытия блоков
-console.log(network,currency, language, isAuth)
+  const isAuth = useUserSettingsStore((state) => state.isAuth)
+  
   const setNetwork = useUserSettingsStore((state) => state.setNetwork)
   const setCurrency = useUserSettingsStore((state) => state.setCurrency)
   const setLanguage = useUserSettingsStore((state) => state.setLanguage)
 
   const isMainnet = network === 'mainnet'
 
-  const { isLoading, hasError, isConnecting, nodeData } = useWalletStatus()
+  // 🚀 ПОДКЛЮЧАЕМ НАШ ОБНОВЛЕННЫЙ ХУК
+  const { isPythonDown, networks } = useNodesStatus()
+
+  // Достаем стейт именно той ноды, которая сейчас активна на фронте
+  const activeNodeStatus = networks[network] || { isLoading: true, isRpcDown: false, isConnecting: false, nodeData: null }
+  const { nodeData, isRpcDown, isConnecting, isLoading } = activeNodeStatus
+
+  // 🚀 ЖЁСТКИЙ И ТОЧНЫЙ РАСЧЁТ СВЕТОДИОДА ДЛЯ ШАПКИ
+  let ledClass = "bg-zinc-500 shadow-[0_0_5px_#71717a] animate-pulse" // Дефолт при загрузке (Серый пульс)
+
+  if (mounted) {
+    if (isPythonDown || isRpcDown) {
+      // Оффлайн состояние ноды -> Фирменный красный/розовый
+      ledClass = "bg-[#FF2E93] shadow-[0_0_6px_#FF2E93]"
+    } else if (isConnecting) {
+      // Поиск пиров -> Янтарный пульс
+      ledClass = "bg-amber-400 shadow-[0_0_6px_#fbbf24] animate-pulse"
+    } else if (nodeData) {
+      if (nodeData.isSynced) {
+        // Полный синк и нормальная работа -> Изумрудный неон
+        ledClass = "bg-emerald-400 shadow-[0_0_6px_#34d399]"
+      } else {
+        // Идет синхронизация (Syncing) -> Спокойный строгий серый пульс
+        ledClass = "bg-zinc-500 shadow-[0_0_5px_#71717a] animate-pulse"
+      }
+    }
+  }
 
   const { data: marketData } = useQuery<PricesResponse>({
     queryKey: ["xchMarketPriceNextRouter"],
     queryFn: async () => (await fetch(INTERNAL_NEXT_PRICES_API)).json(),
     staleTime: 15000
   })
-
-  const currentNetworkName = nodeData?.network?.toLowerCase() ?? ''
-  const isCurrentStateForSelectedNetwork =
-    (isMainnet && currentNetworkName.includes('mainnet')) ||
-    (!isMainnet && currentNetworkName.includes('testnet'))
-
-  const isOnline = !isLoading && !hasError && !isConnecting && !!nodeData && isCurrentStateForSelectedNetwork
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -68,7 +87,6 @@ console.log(network,currency, language, isAuth)
     setIsOpen(false)
   }
 
-  // Циклическое переключение языка по кнопке-тоглу
   const toggleLanguage = () => {
     setLanguage(language === 'ru' ? 'en' : 'ru')
   }
@@ -90,7 +108,6 @@ console.log(network,currency, language, isAuth)
       <div className="flex-1" />
 
       <div className="flex items-center gap-2">
-        {/* Строгий текстовый тогл EN / RU без графики и без Hydration Mismatch */}
         <button
           type="button"
           onClick={toggleLanguage}
@@ -100,7 +117,6 @@ console.log(network,currency, language, isAuth)
           {language.toUpperCase()}
         </button>
 
-        {/* 🛡️ УЛЬТРА-ЧИСТЫЙ СЕТАП: Рендерим дропдаун настроек сети и валюты ТОЛЬКО если кошелек существует */}
         {isAuth && (
           <div className="relative" ref={menuRef}>
             <button
@@ -109,8 +125,7 @@ console.log(network,currency, language, isAuth)
               className="flex items-center gap-2 bg-zinc-900/50 border border-zinc-800/80 text-zinc-300 font-bold text-[10px] uppercase tracking-wider px-3.5 py-2 rounded-xl hover:border-zinc-700 hover:text-white active:scale-[0.97]"
             >
               <span>{isMainnet ? 'Mainnet' : 'Testnet11'}</span>
-              <span className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${!mounted ? 'bg-zinc-700' : isOnline ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-[#FF2E93] shadow-[0_0_6px_#FF2E93] animate-pulse'
-                }`} />
+              <span className={`h-1.5 w-1.5 rounded-full transition-all duration-300 ${ledClass}`} />
               <ChevronDown size={11} className={`text-zinc-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
             </button>
 
@@ -121,21 +136,21 @@ console.log(network,currency, language, isAuth)
                 <button
                   type="button"
                   onClick={() => setNet('mainnet')}
-                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${isMainnet ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'
-                    }`}
+                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${isMainnet ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'}`}
                 >
                   <span>Mainnet</span>
-                  {isMainnet && <Check size={12} className="text-emerald-400" />}
+                  {/* 🚀 ИЗМЕНЕНО: Строгая серая галочка вместо зелёной */}
+                  {isMainnet && <Check size={12} className="text-zinc-500" />}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => setNet('testnet11')}
-                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${!isMainnet ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'
-                    }`}
+                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${!isMainnet ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'}`}
                 >
                   <span>Testnet11</span>
-                  {!isMainnet && <Check size={12} className="text-[#FF2E93]" />}
+                  {/* 🚀 ИЗМЕНЕНО: Строгая серая галочка вместо розовой */}
+                  {!isMainnet && <Check size={12} className="text-zinc-500" />}
                 </button>
 
                 <div className="border-t border-zinc-900/60 my-0.5" />
@@ -144,21 +159,21 @@ console.log(network,currency, language, isAuth)
                 <button
                   type="button"
                   onClick={() => { setCurrency('USD'); setIsOpen(false); }}
-                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${currency === 'USD' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'
-                    }`}
+                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${currency === 'USD' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'}`}
                 >
                   <span>USD ($)</span>
-                  {currency === 'USD' && <Check size={12} className="text-zinc-400" />}
+                  {/* 🚀 Строгая серая галочка */}
+                  {currency === 'USD' && <Check size={12} className="text-zinc-500" />}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => { setCurrency('RUB'); setIsOpen(false); }}
-                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${currency === 'RUB' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'
-                    }`}
+                  className={`flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider ${currency === 'RUB' ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-white hover:bg-zinc-900/40'}`}
                 >
                   <span>RUB (₽)</span>
-                  {currency === 'RUB' && <Check size={12} className="text-zinc-400" />}
+                  {/* 🚀 Строгая серая галочка */}
+                  {currency === 'RUB' && <Check size={12} className="text-zinc-500" />}
                 </button>
 
                 {showLogout && (
@@ -166,11 +181,11 @@ console.log(network,currency, language, isAuth)
                     <div className="border-t border-zinc-900/60 my-0.5" />
                     <button
                       type="button"
-                      onClick={() => { setIsOpen(false); onLogout(); }}
-                      className="flex items-center justify-between w-full px-3.5 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider text-zinc-500 hover:text-[#FF2E93] hover:bg-[#FF2E93]/5"
+                      onClick={() => { onLogout(); setIsOpen(false); }}
+                      className="flex items-center justify-between w-full px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider text-zinc-500 hover:text-white hover:bg-zinc-900/40"
                     >
                       <span>Выйти</span>
-                      <LogOut size={12} />
+                      <LogOut size={11} className="text-zinc-500" />
                     </button>
                   </>
                 )}

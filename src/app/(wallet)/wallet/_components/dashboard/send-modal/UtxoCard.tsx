@@ -1,9 +1,16 @@
 'use client'
+
 import React, { useState } from "react"
-import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
+import { puzzleHashToAddress } from "@/lib/utils/crypto" // 🚀 Наша чистая функция
 
 export function UtxoCard({ addr, unspentCoins }: { addr: any; unspentCoins: any[] }) {
-  const realAddr = usePuzzleHashToAddress(addr.puzzle_hash)
+  // Получаем текущую сеть из Zustand
+  const network = useUserSettingsStore((state) => state.network)
+  
+  // Вызываем прямую функцию вместо хука
+  const realAddr = puzzleHashToAddress(addr.puzzle_hash, network)
+  
   const [copied, setCopied] = useState(false)
   const coins = unspentCoins.filter((c: any) => c.wallet_index === addr.index)
   const shortAddr = realAddr ? `${realAddr.substring(0, 7)}...${realAddr.substring(realAddr.length - 6)}` : "..."

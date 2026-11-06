@@ -3,13 +3,13 @@
 import React, { useEffect, useState } from "react"
 import Link from "next/link"
 import { Server } from "lucide-react"
-import { useWalletStatus } from "@/hooks/useWalletStatus"
+import { useNodesStatus } from "@/hooks/useNodesStatus"
 import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
 
 export function NodeStatusBadge() {
-  // 🏭 Достаем активную сеть кошелька из нашего единого Zustand-куки стора
+  // 🏭 Достаем активную сеть кошелька из Zustand стора ('mainnet' или 'testnet11')
   const network = useUserSettingsStore((state) => state.network)
-  const { nodeData, isPythonDown, isRpcDown } = useWalletStatus()
+  const { isPythonDown, networks } = useNodesStatus()
   const [isClientReady, setIsClientReady] = useState(false)
   
   useEffect(() => {
@@ -19,20 +19,24 @@ export function NodeStatusBadge() {
   // Красивое форматирование имени текущей сети
   const displayNetwork = network === 'mainnet' ? 'Mainnet' : 'Testnet11'
 
-  // ─── 1. СЕРВЕРНЫЙ ПРОХОД И ПЕРВИЧНАЯ ЗАГРУЗКА ───
-  // Показываем стабильное нейтральное состояние до гидратации и до первого пакета
-  if (!isClientReady || (!nodeData && !isPythonDown && !isRpcDown)) {
+  // Вытаскиваем статус конкретно той ноды, которая сейчас выбрана пользователем
+  const activeNodeStatus = networks[network] || { isLoading: true, isRpcDown: false, nodeData: null };
+  const { nodeData, isRpcDown, isLoading } = activeNodeStatus
+
+  // ─── 1. ИСПРАВЛЕНО: СЕРВЕРНЫЙ ПРОХОД И ПЕРВИЧНАЯ ЗАГРУЗКА ───
+  // Заменили дезинформирующий "Online" на нейтральный приглушенный "Loading..." с эффектом пульсации
+  if (!isClientReady || (isLoading && !nodeData && !isPythonDown && !isRpcDown)) {
     return (
       <Link
         href="/nodes/status"
-        className="flex items-center gap-1.5 text-zinc-650 hover:text-zinc-500 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase font-mono"
+        className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-500 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase font-mono"
         title="Подключение к узлу мониторинга..."
       >
-        <Server size={12} className="text-zinc-650 transition-colors duration-300" />
+        <Server size={12} className="text-zinc-600 animate-pulse" />
         <span>
           {displayNetwork} :{' '}
-          <span className="text-zinc-650 inline-block min-w-[55px] text-left">
-            Online
+          <span className="text-zinc-600 inline-block min-w-[55px] text-left font-bold animate-pulse">
+            Loading...
           </span>
         </span>
       </Link>
@@ -44,10 +48,13 @@ export function NodeStatusBadge() {
   let statusColorClass = "text-zinc-650"
 
   if (isPythonDown || isRpcDown) {
-    nodeStatusText = "Error"
+    nodeStatusText = "Offline"
     statusColorClass = "text-[#FF2E93] font-black"
   } else if (nodeData) {
-    if (nodeData.isSynced) {
+    if (nodeData.isConnecting) {
+      nodeStatusText = "Connecting"
+      statusColorClass = "text-amber-500 font-bold"
+    } else if (nodeData.isSynced) {
       nodeStatusText = "Synced"
       statusColorClass = "text-emerald-500 font-bold"
     } else {
@@ -58,7 +65,7 @@ export function NodeStatusBadge() {
 
   return (
     <Link
-      href="/nodes/status" // 🚀 Перенаправляет строго на наш новый выделенный роут
+      href="/nodes/status" 
       className="flex items-center gap-1.5 text-zinc-600 hover:text-zinc-400 transition-colors duration-200 text-[10px] font-medium tracking-wide uppercase font-mono"
       title="Открыть панель мониторинга сети Chia"
     >

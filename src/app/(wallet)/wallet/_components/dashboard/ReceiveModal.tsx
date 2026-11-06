@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import QRCode from "qrcode"
 import { useWalletDashboard } from "@/hooks/useWalletDashboard"
-import { usePuzzleHashToAddress } from "@/hooks/usePuzzleHashToAddress"
+import { useUserSettingsStore } from "@/providers/UserSettnigsProvider"
+import { puzzleHashToAddress } from "@/lib/utils/crypto" // 🚀 Наш чистый и умный конвертер
 
 interface ReceiveModalProps {
   isOpen: boolean
@@ -17,13 +18,16 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
   const [copied, setCopied] = useState(false)
   const [qrSvg, setQrSvg] = useState<string>("")
 
+  // Достаем текущую сеть из Zustand
+  const network = useUserSettingsStore((state) => state.network)
   const { addresses, isLoading: isDashboardLoading } = useWalletDashboard()
 
   const targetObj = addresses && addresses.length > 0
-    ? (addresses.find((a: any) => a.index === 0) || addresses)
+    ? (addresses.find((a: any) => a.index === 0) || addresses[0])
     : null
 
-  const walletAddress = usePuzzleHashToAddress(targetObj?.puzzle_hash)
+  // 🚀 ВМЕСТО СТАРОГО ХУКА: Прямой вызов функции с передачей сети
+  const walletAddress = puzzleHashToAddress(targetObj?.puzzle_hash, network)
   const isAddressLoaded = !isDashboardLoading && walletAddress !== ""
 
   useEffect(() => {
@@ -70,22 +74,13 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
   }
 
   return (
-    // ⚡ АДАПТИВНЫЙ КОНТЕЙНЕР: на мобилках снизу (items-end), на десктопе в центре (sm:items-center) + отступы sm:p-4
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 transition-all duration-300 animate-in fade-in">
-      {/* Закрытие модалки при клике на задний фон */}
       <div className="absolute inset-0" onClick={onClose} />
 
-      {/* 
-        ⚡ АДАПТИВНОЕ ОКНО:
-        - На мобилках скруглены только верхние углы (rounded-t-[32px]), на десктопе все углы круглые (sm:rounded-[28px])
-        - На мобилках выезжает снизу (slide-in-from-bottom), на десктопе мягко увеличивается из центра (sm:zoom-in-95)
-      */}
       <div className="relative w-full max-w-md bg-zinc-900 border-t border-zinc-800 sm:border rounded-t-[32px] sm:rounded-[28px] p-6 space-y-6 shadow-2xl animate-in slide-in-from-bottom sm:slide-in-from-bottom-0 sm:zoom-in-95 duration-300 z-10">
         
-        {/* Хэндл шторки — скрывается на десктопе (sm:hidden) */}
         <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto -mt-2 mb-2 select-none sm:hidden" />
 
-        {/* Заголовок модалки */}
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-black tracking-tight text-white">Получить XCH</h3>
@@ -99,7 +94,6 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
           </button>
         </div>
 
-        {/* Блок QR-кода */}
         <div className="flex flex-col items-center justify-center space-y-4 py-2">
           <div className="relative p-4 bg-white rounded-3xl shadow-xl shadow-[#FF2E93]/5 border-4 border-zinc-950 ring-1 ring-zinc-800 min-w-[192px] min-h-[192px] flex items-center justify-center">
             {isAddressLoaded && qrSvg ? (
@@ -118,7 +112,6 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
           </span>
         </div> 
 
-        {/* Отображение полного Chia-адреса */}
         <Card className="bg-zinc-950/60 border border-zinc-900 rounded-[20px]">
           <CardContent className="p-3.5 space-y-2">
             <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider px-0.5">
@@ -130,15 +123,15 @@ export function ReceiveModal({ isOpen, onClose }: ReceiveModalProps) {
           </CardContent>
         </Card>
 
-        {/* Финтех кнопки нижнего ряда */}
         <div className="grid grid-cols-2 gap-3">
           <Button
             onClick={handleCopy}
             disabled={!isAddressLoaded}
-            className={`h-12 font-black text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer border-none shadow-md ${copied
+            className={`h-12 font-black text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer border-none shadow-md ${
+              copied
                 ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-emerald-500/10'
                 : 'bg-white hover:bg-zinc-200 text-black shadow-white/5 active:scale-[0.98]'
-              }`}
+            }`}
           >
             {copied ? <Check size={15} /> : <Copy size={15} />}
             <span>{copied ? "СКОПИРОВАН" : "КОПИРОВАТЬ"}</span>
