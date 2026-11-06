@@ -21,7 +21,8 @@ export const renderHighlightedAddress = (addr: string) => {
       {/* Вся середина адреса — приглушенный серый */}
       <span className="text-zinc-500 font-medium select-none">{middlePart}</span>
       {/* Конец адреса — яркий розовый (зона валидации) */}
-      <strong className="text-[#FF2E93] font-extrabold select-none">{lastPart}</strong>
+      <strong className="text-white font-extrabold select-none">{lastPart}</strong>
+     
     </div>
   )
 }

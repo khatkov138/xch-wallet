@@ -25,6 +25,7 @@ export function formatStringBalance(xchString: string | number, decimals: number
 }
 
 export function useWalletBalance() {
+  // 🔐 realXCHStr и numericXCH теперь рассчитываются с учетом: isSpent (считаем) и isLocked (не считаем)
   const { realXCHStr, numericXCH, error, refetch, isFetching } = useWalletDashboard()
   
   const currency = useUserSettingsStore((state) => state.currency)
@@ -66,7 +67,7 @@ export function useWalletBalance() {
   return {
     balanceXCH,
     numericXCH,
-    fiatValue, // 🔢 Отдаем чистое число (например: 0 или 142.53)
+    fiatValue, // 🔢 Чистое фиатное число
     currency,
     isError,
     isLoading, 

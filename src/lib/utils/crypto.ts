@@ -287,8 +287,7 @@ export function signChiaTransaction({ mnemonic, walletIndex, messageHex, synthet
     const cleanMsgHex = messageHex.replace("0x", "").trim().toLowerCase();
     const messageBytes = Buffer.from(cleanMsgHex, 'hex')
 
-    console.log(`[КРИТИЧЕСКИЙ ДЕБАГ] Длина байт сообщения для подписи на фронте: ${messageBytes.length} байт`);
-
+   
     // Подписываем сырой массив байт
     const signature = AugSchemeMPL.sign(syntheticSk, messageBytes)
 

@@ -126,7 +126,7 @@ console.log(initialTxData)
           <div className="p-3.5 bg-blue-500/5 border border-blue-500/10 rounded-xl flex items-start gap-2.5 text-zinc-400 leading-relaxed text-[11px] mt-1">
             <HelpCircle size={15} className="text-blue-400 shrink-0 mt-0.5 animate-pulse" />
             <span>
-              Сумма перевода и адреса участников извлекаются в фоне из мемпула ноды. Данные откроются автоматически сразу после валидации блока. Движок кошелька отслеживает статус автоматически каждые 10 секунд.
+              Сумма перевода и адреса участников извлекаются в фоне из мемпула ноды. Данные откроются автоматически сразу после валидации блока. Explorer отслеживает статус автоматически каждые 10 секунд.
             </span>
           </div>
         ) : (

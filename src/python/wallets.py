@@ -2,13 +2,12 @@ import os
 import httpx
 import time
 from fastapi import APIRouter, HTTPException, Query
-from chia_rs import G1Element
+from chia_rs import G1Element, Coin  # 🌟 Импортируем Coin для нативного расчета ID
 from chia.wallet.puzzles.p2_delegated_puzzle_or_hidden_puzzle import puzzle_for_pk
 
 # Импортируем утилиты из shared / config
 from shared import get_wallet_pk_unhardened
 from shared.config import get_network_config
-
 
 wallet_router = APIRouter(prefix="/api/wallet", tags=["Wallets Engine"])
 GAP, MAX_LIM = 40, 1000
@@ -59,10 +58,8 @@ async def get_wallet_dashboard(
     active_indexes: str = Query(None), 
     limit: int = Query(200),
     network: str = Query(..., pattern="^(mainnet|testnet11)$", description="Target network: mainnet or testnet11")
-
 ):
     try:
-        # Извлекаем конфигурацию портов и сертификатов динамически через универсальный модуль конфигурации
         cfg = get_network_config(network)
         cert, key, rpc_url = cfg["crt"], cfg["key"], cfg["rpc_url"]
         
@@ -95,7 +92,6 @@ async def get_wallet_dashboard(
                 try: idxs = [int(i.strip()) for i in active_indexes.split(",") if i.strip().isdigit() and int(i) < MAX_LIM]
                 except: idxs = []
                 
-                # Принудительный базовый пул 0-9 для мгновенного отслеживания UTXO в light режиме
                 base_pool = list(range(0, 10))
                 max_a = max(idxs, default=0)
                 idxs = list(set(base_pool + idxs + [i for i in [max_a + 1, max_a + 2] if i < MAX_LIM]))
@@ -126,7 +122,20 @@ async def get_wallet_dashboard(
                     addr_lookups[ph_clean]["xch"] = str(addr_lookups[ph_clean]["mojo"] / 1e12)
                     addr_lookups[ph_clean]["coins_count"] += 1
                 
+                # 🌟 Нативный расчет криптографического Coin ID через chia_rs
+                try:
+                    parent_bytes = bytes.fromhex(c["parent_coin_info"].replace("0x", ""))
+                    puzzle_bytes = bytes.fromhex(c["puzzle_hash"].replace("0x", ""))
+                    
+                    # Создаем инстанс структуры Coin и забираем ее SHA-256 хеш (.name())
+                    chia_coin_obj = Coin(parent_bytes, puzzle_bytes, int(amt))
+                    generated_coin_id = "0x" + chia_coin_obj.name().hex().lower()
+                except Exception as coin_err:
+                    print(f"⚠️ Ошибка калькуляции Coin ID на бэкенде: {coin_err}")
+                    generated_coin_id = "unknown"
+
                 unspent_coins_list.append({
+                    "coin_id": generated_coin_id,  # 🚀 Пробрасываем готовый ID на верхний уровень
                     "wallet_index": idx,
                     "coin": {
                         "parent_coin_info": c["parent_coin_info"],
@@ -157,8 +166,6 @@ async def get_wallet_dashboard(
                 
         txs = sorted(list(tx_map.values()), key=lambda x: x["timestamp"], reverse=True)
         
-        # СОРТИРОВКА КОИНОВ: строго по возрастанию wallet_index, 
-        # а внутри одного индекса — по убыванию баланса монеты (крупные UTXO первыми)
         sorted_unspent_coins = sorted(
             unspent_coins_list, 
             key=lambda x: (x["wallet_index"], -int(x["coin"]["amount"]))
